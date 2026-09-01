@@ -402,6 +402,9 @@ mod platform {
                 let stop = stop.clone();
                 std::thread::Builder::new().name("testsrc".into()).spawn(move || {
                     let frame_dur = Duration::from_secs_f64(1.0 / fps_whole as f64);
+                    // Absolute-tick pacing: drawing + encoding time must not
+                    // accumulate into frame delay (SPEC §11 60 fps).
+                    let mut next_tick = std::time::Instant::now() + frame_dur;
                     let mut sent = 0u64;
                     while !stop.load(Ordering::Relaxed) {
                         if let Some(max) = max_frames {
@@ -417,7 +420,11 @@ mod platform {
                             }
                         }
                         sent += 1;
-                        std::thread::sleep(frame_dur);
+                        let now = std::time::Instant::now();
+                        if next_tick > now {
+                            std::thread::sleep(next_tick - now);
+                        }
+                        next_tick += frame_dur;
                     }
                     frame_tx.close();
                 })?;

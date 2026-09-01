@@ -11,6 +11,7 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
+use core_foundation::array::CFArray;
 use parking_lot::Mutex;
 use tl_proto::{Codec, CodecCaps, EncodedUnit};
 
@@ -177,7 +178,7 @@ impl Decoder {
                 log::info!("decoder: VT honored the BGRA output request");
             } else {
                 log::info!(
-                    "decoder: VT output format is {fmt:#010x} (BGRA requested); \
+                    "decoder: VT output format is {fmt:#010x}; \
                      presenter converts via shader"
                 );
             }
@@ -342,9 +343,11 @@ impl Decoder {
     }
 }
 
-/// Destination image buffer attributes: request 32BGRA output (SPEC task);
-/// VT falls back to its native format (NV12) when it can't honor it, which
-/// the presenter detects per frame via `DecodedFrame::pixel_format()`.
+/// Destination image buffer attributes: prefer the decoder's native
+/// biplanar YUV 4:2:0 (a quarter of BGRA's write bandwidth — the presenter
+/// converts to RGB in the display shader at no extra cost), with BGRA as
+/// the last resort when VT can't honor either. The chosen format is
+/// detected per frame via `DecodedFrame::pixel_format()`.
 fn destination_pixel_buffer_attrs() -> CFDictionary<CFType, CFType> {
     // SAFETY: the kCVPixelBuffer* keys are valid immutable framework constants
     // (get-rule wrap, no ownership taken).
@@ -352,7 +355,13 @@ fn destination_pixel_buffer_attrs() -> CFDictionary<CFType, CFType> {
         let fmt_key = CFString::wrap_under_get_rule(kCVPixelBufferPixelFormatTypeKey);
         let metal_key = CFString::wrap_under_get_rule(kCVPixelBufferMetalCompatibilityKey);
         let iso_key = CFString::wrap_under_get_rule(kCVPixelBufferIOSurfacePropertiesKey);
-        let fmt_val = CFNumber::from(kCVPixelFormatType_32BGRA as i32);
+        // Ordered preference; a CFArray value asks VT to pick the first
+        // format it can produce.
+        let fmt_val = CFArray::from_CFTypes(&[
+            CFNumber::from(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i32).as_CFType(),
+            CFNumber::from(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32).as_CFType(),
+            CFNumber::from(kCVPixelFormatType_32BGRA as i32).as_CFType(),
+        ]);
         let metal_val = CFBoolean::true_value();
         let iso_val: CFDictionary<CFType, CFType> = CFDictionary::from_CFType_pairs(&[]);
         let pairs = [

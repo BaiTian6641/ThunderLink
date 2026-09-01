@@ -32,20 +32,29 @@ const WHITE: u32 = 0xFFFF_FFFF; // 0xAARRGGBB (32BGRA in memory)
 
 /// Synthetic animated frames (moving gradient/blocks + frame counter).
 /// Needs NO TCC permission — used by unit tests and the smoke run.
+///
+/// The frame-invariant part (gradient, dim block grid, border) is rendered
+/// once into `background`; each frame copies it and paints only the moving
+/// highlight and counter digits. Per-frame cost is one row-wise memcpy plus
+/// O(block) writes, which sustains 60 fps even at 5K.
 pub struct TestPattern {
     width: usize,
     height: usize,
     fps: u32,
     frame: u64,
+    /// Tightly packed (width-major) frame-invariant background.
+    background: Vec<u32>,
 }
 
 impl TestPattern {
     pub fn new(width: u32, height: u32, fps: u32) -> Self {
+        let (width, height) = (width as usize, height as usize);
         Self {
-            width: width as usize,
-            height: height as usize,
+            width,
+            height,
             fps: fps.max(1),
             frame: 0,
+            background: build_background(width, height),
         }
     }
 
@@ -89,6 +98,7 @@ impl TestPattern {
                 self.width,
                 self.height,
                 stride / 4,
+                &self.background,
                 self.frame,
             );
             CVPixelBufferUnlockBaseAddress(&buf, CVPixelBufferLockFlags(0));
@@ -100,18 +110,23 @@ impl TestPattern {
     }
 }
 
-/// SAFETY: `pixels` must point to `height` rows of `stride` u32 pixels with
+/// SAFETY: `pixels` must point at `height` rows of `stride` u32 pixels with
 /// `stride >= width`.
-unsafe fn draw_frame(pixels: *mut u32, width: usize, height: usize, stride: usize, frame: u64) {
-    // Dark diagonal gradient background.
+unsafe fn draw_frame(
+    pixels: *mut u32,
+    width: usize,
+    height: usize,
+    stride: usize,
+    background: &[u32],
+    frame: u64,
+) {
+    debug_assert_eq!(background.len(), width * height);
+    // Frame-invariant background: one row-wise copy.
     for y in 0..height {
-        let g = (y * 96 / height.max(1)) as u32;
-        for x in 0..width {
-            let r = (x * 96 / width.max(1)) as u32;
-            // SAFETY: in-bounds per the caller contract (stride >= width).
-            unsafe {
-                *pixels.add(y * stride + x) = 0xFF00_0000 | (r << 16) | (g << 8) | 0x30;
-            }
+        // SAFETY: row `y` holds `width` valid u32 slots (stride >= width).
+        unsafe {
+            let dst = std::slice::from_raw_parts_mut(pixels.add(y * stride), width);
+            dst.copy_from_slice(&background[y * width..(y + 1) * width]);
         }
     }
 
@@ -120,23 +135,13 @@ unsafe fn draw_frame(pixels: *mut u32, width: usize, height: usize, stride: usiz
     let cols = (width / bs).max(1);
     let rows = (height / bs).max(1);
     let highlight = (frame as usize) % (cols * rows);
-    for by in 0..rows {
-        for bx in 0..cols {
-            let color = if by * cols + bx == highlight {
-                0xFFFF_F080 // bright warm white
-            } else {
-                0xFF40_4048 // dim slate
-            };
-            let x0 = bx * bs + 2;
-            let y0 = by * bs + 2;
-            for y in y0..(y0 + bs - 4).min(height) {
-                for x in x0..(x0 + bs - 4).min(width) {
-                    // SAFETY: coordinates clamped to the frame rectangle.
-                    unsafe {
-                        *pixels.add(y * stride + x) = color;
-                    }
-                }
-            }
+    let (bx, by) = (highlight % cols, highlight / cols);
+    let x0 = bx * bs + 2;
+    let y0 = by * bs + 2;
+    for y in y0..(y0 + bs - 4).min(height) {
+        for x in x0..(x0 + bs - 4).min(width) {
+            // SAFETY: coordinates clamped to the frame rectangle.
+            unsafe { *pixels.add(y * stride + x) = 0xFFFF_F080; }
         }
     }
 
@@ -171,22 +176,50 @@ unsafe fn draw_frame(pixels: *mut u32, width: usize, height: usize, stride: usiz
             }
         }
     }
+}
+
+/// Render the frame-invariant background: dark diagonal gradient, dim slate
+/// block grid, white 1px border. Tightly packed, width-major.
+fn build_background(width: usize, height: usize) -> Vec<u32> {
+    let mut px = vec![0u32; width * height];
+
+    // Gradient: red varies per column, green per row.
+    let r_col: Vec<u32> = (0..width).map(|x| (x * 96 / width.max(1)) as u32).collect();
+    for y in 0..height {
+        let g = (y * 96 / height.max(1)) as u32;
+        let base = 0xFF00_0000 | (g << 8) | 0x30;
+        let row = &mut px[y * width..(y + 1) * width];
+        for (dst, &r) in row.iter_mut().zip(&r_col) {
+            *dst = base | (r << 16);
+        }
+    }
+
+    // Dim slate block grid with 2px gaps; the moving highlight is per-frame.
+    let bs = (width.min(height) / 12).max(16);
+    let cols = (width / bs).max(1);
+    let rows = (height / bs).max(1);
+    for by in 0..rows {
+        for bx in 0..cols {
+            let x0 = bx * bs + 2;
+            let y0 = by * bs + 2;
+            let x_hi = (x0 + bs - 4).min(width);
+            let y_hi = (y0 + bs - 4).min(height);
+            for y in y0..y_hi {
+                px[y * width + x0..y * width + x_hi].fill(0xFF40_4048);
+            }
+        }
+    }
 
     // White 1px border.
     for x in 0..width {
-        // SAFETY: in-bounds per the caller contract.
-        unsafe {
-            *pixels.add(x) = WHITE;
-            *pixels.add((height - 1) * stride + x) = WHITE;
-        }
+        px[x] = WHITE;
+        px[(height - 1) * width + x] = WHITE;
     }
     for y in 0..height {
-        // SAFETY: in-bounds per the caller contract.
-        unsafe {
-            *pixels.add(y * stride) = WHITE;
-            *pixels.add(y * stride + width - 1) = WHITE;
-        }
+        px[y * width] = WHITE;
+        px[y * width + width - 1] = WHITE;
     }
+    px
 }
 
 #[cfg(test)]

@@ -34,6 +34,36 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   ack-gate), tl-video (latest-wins channel, initiator/target loops,
   2/2 tests), thunderlink binary (both roles, `--frames N` for automated
   smoke runs). Awaiting agent crates to compile the binary.
+- Recovery session (2026-09-01 pm): prior orchestrator died mid-clippy-fix
+  (provider 5h limit) leaving unverified edits; everything committed in 10
+  staged commits, then verified: check/clippy clean, 65/65 tests green.
+- Two read-only SPEC audits (scout agents) + fixes: VideoRx discard-skip
+  (a NACKed+superseded frame could still complete after a newer frame →
+  stale decode; regression test added), pts stamped wall-clock BEFORE
+  encode (test-pattern pts was zero-based, SCK host-clock → latency log
+  was ~56 years off), control-channel 1 s heartbeat cadence + RTT from
+  echo (reported in Stats) + 5 s silence teardown, tl-video Sender now
+  closes the channel when the last producer drops.
+- Presenter hardening: setReleasedWhenClosed(false) (AppKit double-free on
+  every close path), CVMetalTexture wrappers + owning frame held one
+  vsync generation (cache-recycle race), render ctx Arc-shared with the
+  display-link callback (teardown no longer relies on undocumented
+  CVDisplayLinkStop semantics), CVDisplayLinkStart status checked, 10-bit
+  formats corrected to 'x420'/'xf20' (the old 'P010' arm was dead code).
+- Decoder now prefers native biplanar YUV output (VT picks 420v; BGRA
+  fallback) — 4× less decoder write bandwidth at 5K; presenter shader
+  converts. Deferred: migrating render crate off core-foundation 0.10 to
+  objc2-core-foundation (consistency nit, zero behavior change).
+- Smoke (SPEC §11) on 127.0.0.1, panel 4480x2520@60, HEVC 550 Mbps,
+  60 s automated run: clean handshake→stream→teardown, zero TCC prompts,
+  encode-to-decode latency 26–38 ms typical (< 50 ✓), source and encoder
+  sustain 60 fps after TestPattern got a cached background (was full
+  per-pixel redraw ≈ 10 fps at 5K) and absolute-tick pacing. Decoded
+  46 fps (77% frame survival): limiter is this kernel's loopback UDP
+  burst drops (known environment fact), not the pipeline; near-lossless
+  TB links should sustain 60. All workspace tests green (66/66 incl.
+  regression), clippy clean, TL_E2E presenter window test green.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).
@@ -41,3 +71,10 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   other OS pairs; macOS↔macOS may cap near 4K60/400 Mbps anyway (fine).
 - No auth on the wire (owner-accepted): document in README when shipped.
 - Real TB hardware validation (iperf3, interface names, MTU) still pending.
+- Smoke fps on loopback is kernel-bound (46/60 at 5K, 77% survival): macOS
+  loopback UDP drops large bursts under load; retransmit ring recovers what
+  fits the 33 ms window. Re-measure on real TB before tuning anything.
+- Stats `decoded_fps` on the wire under-reports (~22 vs measured 46): the
+  send_tick toggle assumes ~500 ms iterations, but echoed heartbeats make
+  iterations shorter. Use log-timestamp deltas for ground truth until
+  fixed (derive cadence from a deadline, not iteration count).

@@ -322,6 +322,14 @@ photodiode/camera or self-measured present timestamps logged to CSV.
 | M8 | **USB/IP v2** | Linux/Windows initiators attach target's USB storage/serial devices |
 | M9 | **1.0 packaging** | Signed installers: Win (EV-signed driver), macOS (notarized dmg), Linux (deb/rpm/AppImage + DKMS) |
 
+**Status 2026-09-01** (single-Mac development, loopback-validated):
+M0 deferred (needs a second TB host) · **M1 done** on macOS (mirror +
+pattern streaming, 9–38 ms glass-to-glass) · **M2 done on macOS**
+(`--virtual` CGVirtualDisplay extended desktop, VD lifecycle smoke-verified)
+· **M3 done** on macOS (input tap→inject channel; feel test needs real
+hardware) · **M4 done** (both roles on the M1 iMac dev machine) ·
+M5–M9 pending.
+
 Suggested build order for fastest visible progress: M0→M1→M3 (wow demo:
 mirror + control) then M2 (true monitor) then platform ports.
 

@@ -50,8 +50,13 @@ TXT record `role=initiator|target`. Announced on Thunderbolt interfaces.
    replies `Ack{ok:true}`, else `Ack{ok:false, message}`.
 4. Initiator sends `Start`. Target starts decoder+presenter, replies
    `Ack{ok:true}` when the first frame can be accepted.
-5. Steady state: `Heartbeat` every 1 s both directions; target sends
-   `Stats(StatsReport)` every 1 s; initiator may send `Led(LedState)`.
+5. Steady state: `Heartbeat` from the target every 1 s (deadline-based
+   cadence — NOT per-iteration counting, since echo replies make control
+   iterations shorter than the recv timeout). The initiator echoes each
+   heartbeat verbatim; the target derives RTT from the echo and reports it
+   in `Stats(StatsReport)`, sent on the same 1 s cadence. Initiator may
+   send `Led(LedState)`. Either side tears the session down after 5 s of
+   control-channel silence.
 6. Either side sends `Stop`/`Bye` or closes the socket → teardown:
    initiator destroys its virtual display; target exits fullscreen.
 
@@ -67,11 +72,15 @@ TXT record `role=initiator|target`. Announced on Thunderbolt interfaces.
   MUST be prepended to every IDR/keyframe unit.
 - Sender keeps a retransmit ring (default 16 MiB) of recent datagrams.
   On `Feedback::Nack`, retransmit listed fragment ranges if still in ring.
-- Receiver reassembles per `frame_seq`. A frame is dropped (and NACKed
-  once) when: a newer `frame_seq` arrives while incomplete, or 33 ms pass
-  since its first fragment. After 3 dropped frames within 500 ms → send
-  `IdrRequest`. Every 500 ms receiver sends `Feedback::Report`
-  (received/lost counters, RTT estimate, jitter).
+- Receiver reassembles per `frame_seq`. A frame becomes
+  NACK-pending when: a newer `frame_seq` arrives while it is incomplete,
+  or 33 ms pass without a new fragment. NACKed frames are retained ~500 ms
+  and CAN still complete from retransmitted or freshly arrived fragments
+  (real links lose retransmit bursts too); up to 3 re-NACKs, then discard.
+  A frame superseded by a newer completed `frame_seq` MUST NOT be
+  delivered to the decoder (latest-wins discard). After 3 discarded frames
+  within 500 ms → send `IdrRequest`. Every 500 ms the receiver sends
+  `Feedback::Report` (received/lost counters, RTT estimate, jitter).
 - Latest-wins latency policy: the receiver never queues more than one
   complete frame waiting for decode; stale frames are dropped, never
   delayed. Encoders: no B-frames, low-delay rate control.
@@ -136,11 +145,17 @@ Each crate's `src/lib.rs` contains its pinned public API. Rules for all:
 
 - `tl-macos-capture`: ScreenCaptureKit capture → `CapturedFrame` (zero-copy
   CVPixelBuffer wrapper); VideoToolbox `Encoder` (HEVC/H.264, Annex B,
-  param sets on IDR, real-time session preset); `testsrc::TestPattern`
+  param sets on IDR, real-time session preset). ALL frame timestamps
+  (`pts_us`) are wall-clock microseconds (`tl_proto::time::now_us`)
+  stamped at capture/source time, so the target can log true
+  glass-to-glass latency on same-host runs; `testsrc::TestPattern`
   synthetic frames requiring NO permissions (used by the smoke test).
 - `tl-macos-render`: VideoToolbox `Decoder` → `DecodedFrame`; AppKit+Metal
   `Presenter` (windowed/borderless-fullscreen, vsync, latest-wins submit,
-  CVMetalTextureCache zero-copy); `decoder_caps()`.
+  CVMetalTextureCache zero-copy). The decoder prefers NATIVE biplanar YUV
+  output (typically NV12/'420v' — 4× less memory bandwidth than BGRA at
+  5K); the presenter converts YUV→RGB in its fragment shader (BT.709),
+  with BGRA as fallback; `decoder_caps()`.
 - `tl-macos-input`: `EventTap` (CGEventTap → normalized `InputEvent`s,
   errors mention "permission" on TCC denial); `Injector` (CGEventPost of
   `InputEvent`s through `Mapping`, USB HID usage → CGKeyCode table).

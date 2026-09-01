@@ -63,6 +63,16 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   burst drops (known environment fact), not the pipeline; near-lossless
   TB links should sustain 60. All workspace tests green (66/66 incl.
   regression), clippy clean, TL_E2E presenter window test green.
+- Follow-up session (2026-09-01 eve): state re-verified personally
+  (66/66 tests, 0 clippy warnings); fixed the Stats cadence bug (deadline-
+  based 1 s sender, rates over real elapsed time; smoke-validated: 57–59
+  fps reported at 1080p60 loopback — was ~half before); wired `--virtual`
+  extended-display mode (VD at target native res/HiDPI, capture + input
+  mapping aimed at its WindowServer frame, VD removed on teardown —
+  smoke-verified: visible mid-run, 0 remain after); SPEC synced with the
+  audit-hardened behaviors (NACK retention/revive, supersede discard,
+  heartbeat echo RTT, 5 s silence teardown, NV12-preferred decode,
+  wall-clock pts). Committed per stage.
 
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
@@ -74,7 +84,3 @@ Living log of decisions, findings, and environment facts. Updated each phase.
 - Smoke fps on loopback is kernel-bound (46/60 at 5K, 77% survival): macOS
   loopback UDP drops large bursts under load; retransmit ring recovers what
   fits the 33 ms window. Re-measure on real TB before tuning anything.
-- Stats `decoded_fps` on the wire under-reports (~22 vs measured 46): the
-  send_tick toggle assumes ~500 ms iterations, but echoed heartbeats make
-  iterations shorter. Use log-timestamp deltas for ground truth until
-  fixed (derive cadence from a deadline, not iteration count).

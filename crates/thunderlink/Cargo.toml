@@ -1,0 +1,22 @@
+[package]
+name = "thunderlink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tl-proto = { workspace = true }
+tl-net = { workspace = true }
+tl-session = { workspace = true }
+tl-video = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+env_logger = { workspace = true }
+clap = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tl-macos-capture = { workspace = true }
+tl-macos-render = { workspace = true }
+tl-macos-input = { workspace = true }
+tl-macos-display = { workspace = true }

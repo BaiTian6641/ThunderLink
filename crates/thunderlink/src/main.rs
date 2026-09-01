@@ -1,0 +1,574 @@
+//! ThunderLink daemon/CLI: one binary, two roles.
+//!
+//!   thunderlink target     — act as a monitor (listens for an initiator)
+//!   thunderlink initiator  — stream a display to a target
+//!
+//! Protocol: SPEC.md §3–§8. macOS implementation only for now.
+
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand, ValueEnum};
+use tl_proto::{Codec, CONTROL_PORT};
+
+#[derive(Parser)]
+#[command(name = "thunderlink", version, about = "Use a computer as a Thunderbolt monitor")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SourceKind {
+    /// Animated synthetic pattern — no Screen Recording permission needed.
+    TestPattern,
+    /// Mirror the primary display (needs Screen Recording TCC grant).
+    Screen,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CodecKind {
+    Hevc,
+    H264,
+}
+
+impl From<CodecKind> for Codec {
+    fn from(k: CodecKind) -> Self {
+        match k {
+            CodecKind::Hevc => Codec::Hevc,
+            CodecKind::H264 => Codec::H264,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Act as a monitor for an incoming initiator connection.
+    Target {
+        /// Address to bind the control listener on.
+        #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::UNSPECIFIED))]
+        bind: IpAddr,
+        /// Present in a window instead of borderless fullscreen.
+        #[arg(long)]
+        windowed: bool,
+        /// Do not forward this machine's keyboard/mouse.
+        #[arg(long)]
+        no_input: bool,
+    },
+    /// Stream a display to a target.
+    Initiator {
+        /// Target host (or host:port).
+        #[arg(long)]
+        connect: String,
+        #[arg(long, value_enum, default_value_t = SourceKind::TestPattern)]
+        source: SourceKind,
+        #[arg(long, value_enum)]
+        codec: Option<CodecKind>,
+        /// Override bitrate (kbps). Default: SPEC §8 ladder.
+        #[arg(long)]
+        bitrate_kbps: Option<u32>,
+        /// Override fps. Default: target panel refresh.
+        #[arg(long)]
+        fps: Option<u32>,
+        /// Override resolution WxH. Default: target panel native resolution.
+        #[arg(long)]
+        res: Option<String>,
+        /// Stop cleanly after N encoded frames (used by the smoke test).
+        #[arg(long)]
+        frames: Option<u64>,
+    },
+}
+
+fn main() -> Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let cli = Cli::parse();
+    match cli.cmd {
+        Cmd::Target { bind, windowed, no_input } => platform::run_target(bind, windowed, no_input),
+        Cmd::Initiator { connect, source, codec, bitrate_kbps, fps, res, frames } => {
+            platform::run_initiator(&connect, source, codec, bitrate_kbps, fps, res, frames)
+        }
+    }
+}
+
+fn parse_connect(s: &str) -> Result<SocketAddr> {
+    if s.contains(':') {
+        s.parse().context("invalid --connect host:port")
+    } else {
+        Ok(SocketAddr::new(s.parse().context("invalid --connect host")?, CONTROL_PORT))
+    }
+}
+
+fn parse_res(s: &str) -> Result<(u32, u32)> {
+    let (w, h) = s.split_once('x').context("--res must be WxH")?;
+    Ok((w.parse().context("--res width")?, h.parse().context("--res height")?))
+}
+
+#[cfg(target_os = "macos")]
+mod platform {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use anyhow::{Context, Result};
+    use parking_lot::Mutex;
+    use tl_macos_capture::capture::{primary_display_id, CaptureConfig, Capturer};
+    use tl_macos_capture::encode::Encoder;
+    use tl_macos_capture::testsrc::TestPattern;
+    use tl_macos_display::panel;
+    use tl_macos_input::inject::{Injector, Mapping};
+    use tl_macos_input::tap::{EventTap, Rect};
+    use tl_macos_render::decode::{decoder_caps, Decoder};
+    use tl_macos_render::present::{Mode, PresentEvent, Presenter};
+    use tl_net::feedback::FeedbackChannel;
+    use tl_net::input_chan::{InputRx, InputTx};
+    use tl_net::video::{VideoRx, VideoTx, VideoTxConfig};
+    use tl_proto::{
+        default_bitrate_kbps, Chroma, InputBatch, InputEvent, Msg, PanelInfo, StatsReport,
+        StreamConfig, TargetCaps, DEFAULT_DATAGRAM_PAYLOAD, FEEDBACK_PORT, INPUT_PORT,
+        VIDEO_PORT,
+    };
+    use tl_session::{InitiatorSession, TargetSession};
+
+    use super::{parse_connect, parse_res, CodecKind, SourceKind};
+
+    const CONTROL_PORT: u16 = tl_proto::CONTROL_PORT;
+
+    fn any() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+    }
+
+    // ------------------------------ target ------------------------------
+
+    pub fn run_target(bind: IpAddr, windowed: bool, no_input: bool) -> Result<()> {
+        let panel_info = panel::main_panel().unwrap_or_else(|e| {
+            log::warn!("panel info failed ({e}); using 1440x900 fallback");
+            PanelInfo {
+                width: 1440,
+                height: 900,
+                refresh_millihertz: 60_000,
+                scale_x100: 200,
+                edid: None,
+            }
+        });
+        let caps = TargetCaps {
+            name: "thunderlink-target".into(),
+            panel: panel_info,
+            decoders: decoder_caps(),
+            accepts_input: !no_input,
+        };
+        log::info!(
+            "target panel: {}x{}@{:.2}Hz scale {}%; decoders: {:?}",
+            caps.panel.width,
+            caps.panel.height,
+            caps.panel.refresh_millihertz as f64 / 1000.0,
+            caps.panel.scale_x100,
+            caps.decoders.iter().map(|d| d.codec).collect::<Vec<_>>()
+        );
+
+        let listener = TcpListener::bind(SocketAddr::new(bind, CONTROL_PORT))
+            .with_context(|| format!("bind control port {CONTROL_PORT}"))?;
+        log::info!("listening for initiator on {bind}:{CONTROL_PORT}");
+
+        let mut sess = TargetSession::accept(&listener, &caps.name, &caps)?;
+        let cfg = sess.await_config(&caps)?;
+        log::info!("negotiated {cfg:?}");
+        let peer_ip = sess.peer_addr().ip();
+
+        // Video path up before ack-ing Start (SPEC §4 step 4).
+        let mut rx = VideoRx::bind(SocketAddr::new(bind, VIDEO_PORT))?;
+        let fb = FeedbackChannel::bind(
+            SocketAddr::new(bind, 0),
+            SocketAddr::new(peer_ip, FEEDBACK_PORT),
+        )?;
+        let mut decoder = Decoder::new()?;
+
+        let mode = if windowed { Mode::Windowed } else { Mode::Fullscreen };
+        let presenter = Presenter::new(mode)?; // main thread (AppKit)
+        let submit = presenter.submit_handle();
+        let closer_decode = submit.clone();
+        let closer_control = submit.clone();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let counters = Arc::new(tl_video::Counters::default());
+
+        let start = sess.await_start()?;
+        start.ack_ready()?;
+        log::info!("streaming started");
+
+        // Decode worker: UDP -> VT decode -> presenter (latest-wins).
+        {
+            let stop = stop.clone();
+            let counters = counters.clone();
+            std::thread::Builder::new().name("decode".into()).spawn(move || {
+                let mut n = 0u64;
+                let r = tl_video::run_target(&mut rx, &fb, |unit| {
+                    for f in decoder.decode(unit)? {
+                        n += 1;
+                        if n.is_multiple_of(120) {
+                            let lat_ms = (tl_proto::time::now_us() - f.pts_us()) as f64 / 1000.0;
+                            log::info!("frame {n}: glass-to-glass ~{lat_ms:.1} ms");
+                        }
+                        submit.submit(f);
+                    }
+                    Ok(())
+                }, &stop, &counters);
+                if let Err(e) = r {
+                    log::error!("decode loop ended: {e}");
+                }
+                stop.store(true, Ordering::SeqCst);
+                closer_decode.request_close();
+            })?;
+        }
+
+        // Control worker: heartbeats/stats out, Stop/Bye in.
+        {
+            let stop = stop.clone();
+            let counters = counters.clone();
+            std::thread::Builder::new().name("control".into()).spawn(move || {
+                let chan = sess.channel();
+                let _ = chan.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut last_bytes = 0u64;
+                let mut last_frames = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = chan.send(&Msg::Heartbeat { ts_us: tl_proto::time::now_us() });
+                    let bytes = counters.bytes.load(Ordering::Relaxed);
+                    let frames = counters.frames_in.load(Ordering::Relaxed);
+                    let _ = chan.send(&Msg::Stats(StatsReport {
+                        decoded_fps: ((frames - last_frames) * 2) as u32, // 500 ms tick
+                        bitrate_kbps: ((bytes - last_bytes) * 8 * 2 / 1000) as u32,
+                        ..Default::default()
+                    }));
+                    last_bytes = bytes;
+                    last_frames = frames;
+                    match chan.recv() {
+                        Ok(Msg::Stop) | Ok(Msg::Bye) => {
+                            log::info!("session ended by initiator");
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::TimedOut
+                                || e.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(e) => {
+                            log::warn!("control channel: {e}");
+                            break;
+                        }
+                    }
+                }
+                stop.store(true, Ordering::SeqCst);
+                closer_control.request_close();
+            })?;
+        }
+
+        // Input forwarding: event tap -> 500 Hz UDP batches.
+        if !no_input {
+            let input_tx =
+                InputTx::bind(SocketAddr::new(bind, 0), SocketAddr::new(peer_ip, INPUT_PORT))?;
+            let (w, h) = panel::main_display_points().unwrap_or((1440.0, 900.0));
+            let bounds = Rect { x: 0.0, y: 0.0, w, h };
+            let (evt_tx, mut evt_rx) = tl_video::chan::latest_wins::<InputEvent>();
+            match EventTap::start(bounds, Box::new(move |ev| evt_tx.send(ev))) {
+                Ok(tap) => {
+                    let stop = stop.clone();
+                    std::thread::Builder::new().name("input".into()).spawn(move || {
+                        // The tap must outlive the loop; the system
+                        // removes it when dropped.
+                        let _tap = tap;
+                        let mut seq = 0u32;
+                        while !stop.load(Ordering::Relaxed) {
+                            let Some(ev) = evt_rx.recv_timeout(Duration::from_millis(2)) else {
+                                if evt_rx.is_closed() {
+                                    break;
+                                }
+                                continue;
+                            };
+                            seq = seq.wrapping_add(1);
+                            if let Err(e) = input_tx.send(&InputBatch { seq, events: vec![ev] })
+                            {
+                                log::warn!("input send: {e}");
+                            }
+                        }
+                    })?;
+                }
+                Err(e) => log::warn!("event tap unavailable ({e}); input forwarding disabled"),
+            }
+        }
+
+        // Main thread: present until the window closes or the session stops.
+        let stop_flag = stop.clone();
+        presenter.run(move |ev| {
+            if ev == PresentEvent::CloseRequested {
+                stop_flag.store(true, Ordering::SeqCst);
+            }
+        })?;
+        stop.store(true, Ordering::SeqCst);
+        // Let worker threads observe the stop flag before process exit.
+        std::thread::sleep(Duration::from_millis(200));
+        log::info!("target exiting");
+        Ok(())
+    }
+
+    // ---------------------------- initiator ------------------------------
+
+    pub fn run_initiator(
+        connect: &str,
+        source: SourceKind,
+        codec: Option<CodecKind>,
+        bitrate_kbps: Option<u32>,
+        fps: Option<u32>,
+        res: Option<String>,
+        max_frames: Option<u64>,
+    ) -> Result<()> {
+        let addr = parse_connect(connect)?;
+        let mut sess = InitiatorSession::connect(addr, "thunderlink-initiator")?;
+        let caps = sess.caps().clone();
+
+        // Default: stream at the target panel's NATIVE resolution (SPEC §1).
+        let (width, height) = match res.as_deref() {
+            Some(r) => parse_res(r)?,
+            None => (caps.panel.width, caps.panel.height),
+        };
+        let fps_milli = fps.map(|f| f * 1000).unwrap_or(caps.panel.refresh_millihertz);
+        let codec = codec.map(Into::into).unwrap_or(tl_proto::Codec::Hevc);
+        let bitrate =
+            bitrate_kbps.unwrap_or_else(|| default_bitrate_kbps(width, height, codec));
+        let cfg = StreamConfig {
+            codec,
+            width,
+            height,
+            fps_millihertz: fps_milli,
+            bitrate_kbps: bitrate,
+            chroma: Chroma::Yuv420,
+            hdr: false,
+        };
+        log::info!(
+            "requesting {width}x{height}@{:.2}Hz {codec:?} {bitrate} kbps",
+            fps_milli as f64 / 1000.0
+        );
+        sess.configure(&cfg)?;
+
+        let peer_ip = sess.peer_addr().ip();
+        let tx = Arc::new(Mutex::new(VideoTx::bind(
+            SocketAddr::new(any(), 0),
+            VideoTxConfig {
+                peer: SocketAddr::new(peer_ip, VIDEO_PORT),
+                datagram_payload: DEFAULT_DATAGRAM_PAYLOAD,
+                ring_bytes: 16 << 20,
+            },
+        )?));
+        let fb = FeedbackChannel::bind(
+            SocketAddr::new(any(), FEEDBACK_PORT),
+            SocketAddr::new(peer_ip, FEEDBACK_PORT),
+        )?;
+        let input_rx = InputRx::bind(SocketAddr::new(any(), INPUT_PORT))?;
+
+        // Frame source: callback-driven (screen) or paced feeder (pattern).
+        let (frame_tx, mut frame_rx) = tl_video::chan::latest_wins();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let mut capturer: Option<Capturer> = None;
+        match source {
+            SourceKind::Screen => {
+                let mut c = Capturer::new(CaptureConfig {
+                    display_id: primary_display_id()?,
+                    fps: (fps_milli / 1000).max(1),
+                    queue_depth: 2,
+                    show_cursor: true,
+                })?;
+                c.start(Box::new(move |f| frame_tx.send(f)))
+                    .context("start screen capture")?;
+                capturer = Some(c);
+            }
+            SourceKind::TestPattern => {
+                let fps_whole = (fps_milli / 1000).max(1);
+                let mut tp = TestPattern::new(width, height, fps_whole);
+                let stop = stop.clone();
+                std::thread::Builder::new().name("testsrc".into()).spawn(move || {
+                    let frame_dur = Duration::from_secs_f64(1.0 / fps_whole as f64);
+                    let mut sent = 0u64;
+                    while !stop.load(Ordering::Relaxed) {
+                        if let Some(max) = max_frames {
+                            if sent >= max {
+                                break;
+                            }
+                        }
+                        match tp.next() {
+                            Ok(f) => frame_tx.send(f),
+                            Err(e) => {
+                                log::error!("test pattern: {e}");
+                                break;
+                            }
+                        }
+                        sent += 1;
+                        std::thread::sleep(frame_dur);
+                    }
+                    frame_tx.close();
+                })?;
+            }
+        }
+
+        let mut encoder = Encoder::new(&cfg).context("create VideoToolbox encoder")?;
+
+        // Everything is ready; open the stream.
+        sess.start()?;
+        log::info!("streaming started");
+
+        // Feedback worker: NACK retransmits / IDR requests from target.
+        {
+            let stop = stop.clone();
+            let tx = tx.clone();
+            std::thread::Builder::new().name("feedback".into()).spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match fb.poll(Duration::from_millis(100)) {
+                        Ok(list) => {
+                            let mut g = tx.lock();
+                            for f in &list {
+                                if let Err(e) = g.handle_feedback(f) {
+                                    log::warn!("feedback handling: {e}");
+                                }
+                            }
+                        }
+                        Err(e) => log::warn!("feedback poll: {e}"),
+                    }
+                }
+            })?;
+        }
+
+        // Input inject worker: UDP batches -> CGEventPost on this machine.
+        {
+            let stop = stop.clone();
+            std::thread::Builder::new().name("input-inject".into()).spawn(move || {
+                let mut inj = match Injector::new() {
+                    Ok(i) => i,
+                    Err(e) => {
+                        log::warn!("injector unavailable ({e}); input injection disabled");
+                        return;
+                    }
+                };
+                let map = match panel::main_display_points() {
+                    Ok((w, h)) => Mapping { origin_x: 0.0, origin_y: 0.0, width: w, height: h },
+                    Err(e) => {
+                        log::warn!("display geometry unavailable ({e}); input injection disabled");
+                        return;
+                    }
+                };
+                while !stop.load(Ordering::Relaxed) {
+                    match input_rx.poll(Duration::from_millis(100)) {
+                        Ok(batches) => {
+                            for b in batches {
+                                for ev in &b.events {
+                                    let r = if matches!(ev, InputEvent::Leave) {
+                                        inj.release_all()
+                                    } else {
+                                        inj.inject(ev, &map)
+                                    };
+                                    if let Err(e) = r {
+                                        log::warn!("inject: {e}");
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => log::warn!("input poll: {e}"),
+                    }
+                }
+            })?;
+        }
+
+        // Control worker: echo heartbeats, log target stats, watch Stop/Bye.
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel::<()>();
+        {
+            let stop = stop.clone();
+            std::thread::Builder::new().name("control".into()).spawn(move || {
+                let chan = sess.channel();
+                let _ = chan.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut last_hb = 0i64;
+                while !stop.load(Ordering::Relaxed) {
+                    match chan.recv() {
+                        Ok(Msg::Heartbeat { ts_us }) => {
+                            if ts_us != last_hb {
+                                // Echo for RTT measurement on the target.
+                                let _ = chan.send(&Msg::Heartbeat { ts_us });
+                                last_hb = ts_us;
+                            }
+                        }
+                        Ok(Msg::Stats(s)) => {
+                            log::info!(
+                                "target: {} fps decoded, {} kbps",
+                                s.decoded_fps,
+                                s.bitrate_kbps
+                            );
+                        }
+                        Ok(Msg::Stop) | Ok(Msg::Bye) => break,
+                        Ok(_) => {}
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::TimedOut
+                                || e.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(e) => {
+                            log::warn!("control channel: {e}");
+                            break;
+                        }
+                    }
+                }
+                stop.store(true, Ordering::SeqCst);
+                let _ = chan.send(&Msg::Stop);
+                let _ = chan.send(&Msg::Bye);
+                let _ = ctrl_tx.send(());
+            })?;
+        }
+
+        // Encode worker (this thread): frames -> VT encode -> UDP.
+        let counters = tl_video::Counters::default();
+        let frames_sent = AtomicU64::new(0);
+        let stop_enc = stop.clone();
+        tl_video::run_initiator(
+            &mut frame_rx,
+            |frame, force_idr| {
+                if let Some(max) = max_frames {
+                    if frames_sent.load(Ordering::Relaxed) >= max {
+                        stop_enc.store(true, Ordering::Relaxed);
+                    }
+                }
+                if force_idr {
+                    encoder.request_idr();
+                }
+                let units = encoder.encode(frame)?;
+                frames_sent.fetch_add(1, Ordering::Relaxed);
+                Ok(units)
+            },
+            &tx,
+            &stop,
+            &counters,
+        )?;
+
+        // Clean teardown: encoder/capturer drop here, control sends Stop/Bye.
+        stop.store(true, Ordering::SeqCst);
+        drop(encoder);
+        drop(capturer.take());
+        let _ = ctrl_rx.recv_timeout(Duration::from_secs(2));
+        log::info!("initiator exiting");
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod platform {
+    use super::{CodecKind, SourceKind};
+    use anyhow::{bail, Result};
+    use std::net::IpAddr;
+
+    pub fn run_target(_bind: IpAddr, _windowed: bool, _no_input: bool) -> Result<()> {
+        bail!("only macOS is implemented so far (see PLAN.md milestones)")
+    }
+
+    pub fn run_initiator(
+        _connect: &str,
+        _source: SourceKind,
+        _codec: Option<CodecKind>,
+        _bitrate_kbps: Option<u32>,
+        _fps: Option<u32>,
+        _res: Option<String>,
+        _frames: Option<u64>,
+    ) -> Result<()> {
+        bail!("only macOS is implemented so far (see PLAN.md milestones)")
+    }
+}

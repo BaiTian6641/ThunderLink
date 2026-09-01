@@ -67,9 +67,16 @@ enum Cmd {
     },
     /// Stream a display to a target.
     Initiator {
-        /// Target host (or host:port).
+        /// Target host (or host:port). Mutually exclusive with --discover.
+        #[arg(long, conflicts_with = "discover")]
+        connect: Option<String>,
+        /// Find a target via mDNS (`_thunderlink._tcp`, TXT role=target)
+        /// instead of --connect. Browses up to --discover-timeout.
         #[arg(long)]
-        connect: String,
+        discover: bool,
+        /// How long --discover may browse before giving up.
+        #[arg(long, default_value_t = 10)]
+        discover_timeout: u64,
         #[arg(long, value_enum, default_value_t = SourceKind::TestPattern)]
         source: SourceKind,
         #[arg(long, value_enum)]
@@ -98,8 +105,44 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Target { bind, windowed, no_input } => platform::run_target(bind, windowed, no_input),
-        Cmd::Initiator { connect, source, codec, bitrate_kbps, fps, res, frames, r#virtual } => {
+        Cmd::Target { bind, windowed, no_input } => {
+            // Announce on mDNS until the session ends (SPEC §3); a failure
+            // is non-fatal — direct-IP --connect still works.
+            let announcer = tl_net::discovery::Announcer::start(
+                "thunderlink-target",
+                tl_proto::Role::Target,
+                CONTROL_PORT,
+            )
+            .map_err(|e| {
+                log::warn!("mDNS announce failed ({e}); discovery disabled");
+                e
+            })
+            .ok();
+            let r = platform::run_target(bind, windowed, no_input);
+            drop(announcer);
+            r
+        }
+        Cmd::Initiator {
+            connect,
+            discover,
+            discover_timeout,
+            source,
+            codec,
+            bitrate_kbps,
+            fps,
+            res,
+            frames,
+            r#virtual,
+        } => {
+            let connect = match (connect, discover) {
+                (Some(c), false) => c,
+                (None, true) => {
+                    let addr = discover_target(std::time::Duration::from_secs(discover_timeout))?;
+                    addr.to_string()
+                }
+                (Some(_), true) => anyhow::bail!("--connect and --discover are mutually exclusive"),
+                (None, false) => anyhow::bail!("specify --connect HOST[:PORT] or --discover"),
+            };
             platform::run_initiator(
                 &connect,
                 source,
@@ -114,6 +157,67 @@ fn main() -> Result<()> {
             )
         }
     }
+}
+
+/// Browse `_thunderlink._tcp` until a role=target peer resolves; prefer
+/// IPv4, then non-link-local IPv6 (link-local needs a scope id the TXT
+/// record cannot carry).
+fn discover_target(timeout: std::time::Duration) -> Result<SocketAddr> {
+    use std::net::TcpStream;
+    use tl_net::discovery::{Browser, DiscoveryEvent};
+    use tl_proto::Role;
+
+    let browser = Browser::start().context("start mDNS browser")?;
+    let deadline = std::time::Instant::now() + timeout;
+    log::info!("browsing for a ThunderLink target (up to {timeout:?})...");
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        let Some(event) = browser.next_event(remaining) else { break };
+        let DiscoveryEvent::Added(peer) = event else { continue };
+        if peer.role != Role::Target {
+            continue; // another initiator announcing itself
+        }
+        log::info!(
+            "discovered target {:?} at {:?} port {}",
+            peer.name,
+            peer.addrs,
+            peer.port
+        );
+        // First resolutions can carry a partial address set; probe each
+        // candidate in priority order and use the first that answers.
+        for addr in ordered_candidate_addrs(&peer) {
+            match TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1)) {
+                Ok(_) => return Ok(addr),
+                Err(e) => log::warn!("target addr {addr} unreachable ({e}); trying next"),
+            }
+        }
+        // Keep browsing: the peer may re-resolve with better addresses.
+    }
+    anyhow::bail!("no ThunderLink target found via mDNS within {timeout:?}")
+}
+
+/// Connection candidates in priority order: IPv4 first, then global
+/// unicast IPv6 (2000::/3), then anything except IPv6 link-local (which
+/// needs a scope id the TXT record cannot carry).
+fn ordered_candidate_addrs(peer: &tl_net::discovery::Peer) -> Vec<SocketAddr> {
+    let is_link_local_v6 =
+        |ip: &IpAddr| matches!(ip, IpAddr::V6(v6) if (v6.segments()[0] & 0xffc0) == 0xfe80);
+    let mut v6_global = Vec::new();
+    let mut rest = Vec::new();
+    for ip in &peer.addrs {
+        match ip {
+            IpAddr::V4(_) => {} // handled below (kept in original order)
+            IpAddr::V6(v6) if (v6.segments()[0] & 0xe000) == 0x2000 => v6_global.push(*ip),
+            ip if !is_link_local_v6(ip) => rest.push(*ip),
+            _ => {} // link-local v6: unusable without scope id
+        }
+    }
+    peer.addrs
+        .iter()
+        .filter(|ip| ip.is_ipv4())
+        .chain(v6_global.iter())
+        .chain(rest.iter())
+        .map(|ip| SocketAddr::new(*ip, peer.port))
+        .collect()
 }
 
 fn parse_connect(s: &str) -> Result<SocketAddr> {
@@ -197,7 +301,26 @@ mod platform {
             .with_context(|| format!("bind control port {CONTROL_PORT}"))?;
         log::info!("listening for initiator on {bind}:{CONTROL_PORT}");
 
-        let mut sess = TargetSession::accept(&listener, &caps.name, &caps)?;
+        // Stray TCP connections (port scans, discovery probes, peers that
+        // hang up mid-handshake) must not kill the target — keep listening.
+        // A listener-level failure only aborts after repeated attempts.
+        let mut sess = {
+            let mut failures = 0u32;
+            loop {
+                match TargetSession::accept(&listener, &caps.name, &caps) {
+                    Ok(sess) => break sess,
+                    Err(e) => {
+                        failures += 1;
+                        if failures >= 16 {
+                            return Err(anyhow::Error::new(e).context(
+                                "control listener failing repeatedly",
+                            ));
+                        }
+                        log::warn!("inbound connection failed ({e}); listening on");
+                    }
+                }
+            }
+        };
         let cfg = sess.await_config(&caps)?;
         log::info!("negotiated {cfg:?}");
         let peer_ip = sess.peer_addr().ip();

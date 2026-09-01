@@ -1,0 +1,51 @@
+[package]
+name = "tl-macos-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tl-proto = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+core-foundation = "0.10"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSArray",
+    "NSDate",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSObject",
+    "NSRunLoop",
+    "NSString",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSEvent",
+    "NSView",
+    "NSWindow",
+] }
+objc2-quartz-core = { version = "0.3", features = [
+    "CALayer",
+    "CAMetalLayer",
+] }
+objc2-metal = { version = "0.3", features = [
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLDevice",
+    "MTLDrawable",
+    "MTLLibrary",
+    "MTLRenderCommandEncoder",
+    "MTLRenderPass",
+    "MTLRenderPipeline",
+    "MTLTexture",
+] }
+
+[dev-dependencies]
+# Encode→decode roundtrip test (SPEC §9 allowance; never edited here).
+tl-macos-capture = { workspace = true }
+env_logger = { workspace = true }
+block2 = "0.6"

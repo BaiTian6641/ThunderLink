@@ -3,7 +3,7 @@
 For the next agent/operator. Read PLAN.md (strategy/milestones), SPEC.md
 (wire protocol + crate contracts), NOTES.md (decision/risk log) first; this
 file is the operational state dump: what exists, what is verified, how to
-prove it, and what to do next. Last updated 2026-09-01 (post-mDNS-wiring).
+prove it, and what to do next. Last updated 2026-09-01 (post-TCC + audio SPEC).
 
 ## 1. Where we are
 
@@ -12,7 +12,7 @@ full macOS implementation of both roles, point-to-point, no crypto.
 
 - All 9 workspace crates compile; `cargo test --workspace` = **66/66 green**;
   `cargo clippy --workspace --all-targets` = **0 warnings**. Tree clean,
-  everything committed (15 commits, see `git log --oneline`).
+  everything committed (17 commits, see `git log --oneline`).
 - End-to-end smoke (SPEC §11) passes on 127.0.0.1: handshake → HEVC stream →
   decode → Metal present → clean Stop teardown, exit 0 both processes.
   Measured: 4480x2520@60 HEVC 550 Mbps glass-to-glass 26–38 ms; 1080p60
@@ -27,9 +27,15 @@ full macOS implementation of both roles, point-to-point, no crypto.
   display at the target panel's native res/HiDPI, captures it, removes it on
   teardown. Lifecycle smoke-verified (system_profiler mid-run / 0 after).
 
-**Not yet:** real Thunderbolt-link test (needs 2nd host), TCC-gated paths
-run live (screen mirror capture, event-tap input), Linux/Windows crates,
-audio, USB/IP, packaging, any crypto.
+**Not yet:** real Thunderbolt-link test (needs 2nd host), Linux/Windows crates,
+USB/IP, packaging, any crypto, audio implementation (contract: SPEC §12).
+
+**TCC (2026-09-01 late): grants are in place and LIVE-verified.** Screen
+Recording (`--source screen` mirror smoke: ~31 ms, clean teardown), Input
+Monitoring + Accessibility (inject→tap keyboard roundtrip). Caveats:
+`capture_frames_e2e` passes even on denial (early return) — the binary's
+"permission" error is the honest probe; CGEventPost silently drops without
+Accessibility. Don't run loopback sessions with input enabled (tap echo loop).
 
 ## 2. Repo map
 
@@ -150,24 +156,25 @@ reports in NOTES/git history):
   once-only — SPEC §5 has been updated to match.
 
 ## 7. Next steps, in priority order
-
 1. **Real TB link validation** (needs 2nd host): iperf3 both directions,
    then full session over the cable; re-measure fps/latency; validate
    `link::thunderbolt_interfaces()` detection on all OSes.
-2. **TCC pass on dev machine**: grant Screen Recording + Input Monitoring to
-   the dev terminal → run mirror-mode smoke (`--source screen`) and input
-   roundtrip (TL_E2E=1 tests exist in capture/input crates).
+2. ~~TCC pass on dev machine~~ **done 2026-09-01 late** — all three grants,
+   mirror smoke + inject→tap roundtrip live-verified (see §1 caveats).
 3. **Linux platform crates** (`tl-linux-*`): EVDI/VKMS virtual display,
    KMS/PipeWire capture, VAAPI encode/decode, uinput inject, evdev capture.
    Core crates are platform-neutral already; mirror the macOS crate APIs.
+   Do NOT write these blind on a Mac — wait for Linux hardware/CI.
 4. **Windows platform crates** (`tl-windows-*`): IddCx driver (fork
    VirtualDrivers/Virtual-Display-Driver), DXGI DD capture, MFT/D3D11VA,
    SendInput. Start EV code-signing cert procurement NOW (weeks of lead).
 5. ~~Wire `discovery`/mDNS into the binary~~ **done 2026-09-01 night**
    (target announces; `--discover` on initiator; addr probing; probe-proof
    accept loop).
-6. Audio (Opus, SPEC absent — add SPEC section first), USB/IP (v2),
-   adaptive bitrate ladder hooks (Report is wired; policy not implemented).
+6. **Audio implementation** against the now-written contract (SPEC §12;
+   start with the TCC-free sine tone source, then Core Audio tap);
+   USB/IP (v2); adaptive bitrate ladder hooks (Report is wired; policy
+   not implemented).
 7. Housekeeping: ~~README~~ **done** (incl. no-auth threat model); render
    crate core-foundation 0.10 → objc2-core-foundation consistency nit.
 

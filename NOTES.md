@@ -91,6 +91,26 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   1080p60 stream, 60 fps decoded, 8.6–9.6 ms encode-to-decode, rtt
   135 µs, clean teardown, target served a session after a raw probe.
   README.md written (usage + no-auth threat model). 66/66, clippy 0.
+- TCC + audio-spec session (2026-09-01 late): user granted Screen
+  Recording, Input Monitoring and Accessibility to the dev app. LIVE
+  validations now green: `--source screen` mirror smoke (1920x1080@60,
+  ~31 ms encode-to-decode, 36–54 fps on an idle desktop — SCK sends
+  empty samples for unchanged content, correctly dropped) and the
+  inject→tap keyboard roundtrip (Input Monitoring + Accessibility).
+  Note: `capture_frames_e2e` PASSES even on TCC denial (early-return
+  path) — treat a 0.2 s pass as inconclusive; the binary's clean
+  "permission" error is the real probe. CGEventPost silently drops
+  without Accessibility (no API error) — that was the roundtrip's
+  initial failure. Loopback session with input enabled stays untested
+  by design (tap would re-capture injected events → echo loop; only
+  meaningful across two hosts).
+- Audio v1.1 contract written BEFORE implementation (SPEC §12, repo
+  convention): Opus 48 kHz stereo 10 ms frames, UDP 47780, wall-clock
+  pts shared with video, jitter buffer + PLC, negotiation fields, §12.7
+  validation bar. Research finding: macOS 14.2+ ships a PUBLIC system-
+  audio tap (AudioHardwareCreateProcessTap + aggregate device) — PLAN
+  §6 updated; no BlackHole-style driver needed. tl-proto types land
+  with the implementation.
 
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
@@ -106,3 +126,6 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   HANDOFF §7 order: TB-link + TCC passes (need hardware/user), Linux/
   Windows crates (need matching platforms — do not write blind FFI),
   audio SPEC section, adaptive-bitrate policy (hooks exist), README ✓.
+- Audio: contract done (SPEC §12); implementation order = sine tone
+  source (no TCC) first, then Core Audio tap. Microphone backchannel
+  explicitly v2.

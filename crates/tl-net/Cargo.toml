@@ -1,0 +1,15 @@
+[package]
+name = "tl-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tl-proto = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+socket2 = { workspace = true }
+if-addrs = { workspace = true }
+mdns-sd = { workspace = true }

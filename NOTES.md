@@ -77,6 +77,20 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   validation recipes, load-bearing conventions, environment facts, agent
   history, prioritized next steps). Tree clean at 13 commits; 66/66 tests,
   0 clippy warnings. Next operator: read HANDOFF.md first.
+- mDNS wiring session (2026-09-01 night, post-handoff): target now
+  announces `_thunderlink._tcp` (role TXT) for its lifetime; initiator
+  gained `--discover`/`--discover-timeout` (mutually exclusive with
+  --connect). Two robustness flaws surfaced during loopback validation
+  and were fixed: (a) first mDNS resolutions can carry partial/stale
+  address sets (a Tailscale ULA was picked while the target was
+  loopback-bound → "No route to host") — candidates are now probed with
+  a 1 s TCP connect in priority order (IPv4, global IPv6, non-link-local,
+  last resort); (b) the target's control listener DIED on any connection
+  that failed the handshake (a plain `nc -z` port probe was enough to
+  kill it) — accept now retries up to 16 failures. E2E: discover →
+  1080p60 stream, 60 fps decoded, 8.6–9.6 ms encode-to-decode, rtt
+  135 µs, clean teardown, target served a session after a raw probe.
+  README.md written (usage + no-auth threat model). 66/66, clippy 0.
 
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
@@ -88,3 +102,7 @@ Living log of decisions, findings, and environment facts. Updated each phase.
 - Smoke fps on loopback is kernel-bound (46/60 at 5K, 77% survival): macOS
   loopback UDP drops large bursts under load; retransmit ring recovers what
   fits the 33 ms window. Re-measure on real TB before tuning anything.
+- mDNS discovery is wired (was: implemented-but-unused). Remaining
+  HANDOFF §7 order: TB-link + TCC passes (need hardware/user), Linux/
+  Windows crates (need matching platforms — do not write blind FFI),
+  audio SPEC section, adaptive-bitrate policy (hooks exist), README ✓.

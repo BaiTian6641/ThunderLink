@@ -3,7 +3,7 @@
 For the next agent/operator. Read PLAN.md (strategy/milestones), SPEC.md
 (wire protocol + crate contracts), NOTES.md (decision/risk log) first; this
 file is the operational state dump: what exists, what is verified, how to
-prove it, and what to do next. Last updated 2026-09-01 (post-integration).
+prove it, and what to do next. Last updated 2026-09-01 (post-mDNS-wiring).
 
 ## 1. Where we are
 
@@ -12,13 +12,18 @@ full macOS implementation of both roles, point-to-point, no crypto.
 
 - All 9 workspace crates compile; `cargo test --workspace` = **66/66 green**;
   `cargo clippy --workspace --all-targets` = **0 warnings**. Tree clean,
-  everything committed (12 commits, see `git log --oneline`).
+  everything committed (15 commits, see `git log --oneline`).
 - End-to-end smoke (SPEC §11) passes on 127.0.0.1: handshake → HEVC stream →
   decode → Metal present → clean Stop teardown, exit 0 both processes.
   Measured: 4480x2520@60 HEVC 550 Mbps glass-to-glass 26–38 ms; 1080p60
   9.7–12.3 ms; decoded fps ≈ source fps at 1080p, ~46/60 at 5K **on loopback
   only** (kernel drops bursts — see §5).
-- `--virtual` extended-display mode: creates a real OS-visible virtual
+- mDNS discovery wired end-to-end: target announces `_thunderlink._tcp`
+  (role TXT) for its lifetime; initiator `--discover [--discover-timeout N]`
+  browses and probes candidate addrs (IPv4 → global v6 → rest). The control
+  listener survives stray connections/probes (accept retried ≤16 failures).
+- README.md exists: usage, build/validation, **no-auth threat model**.
+  `--virtual` extended-display mode: creates a real OS-visible virtual
   display at the target panel's native res/HiDPI, captures it, removes it on
   teardown. Lifecycle smoke-verified (system_profiler mid-run / 0 after).
 
@@ -63,9 +68,10 @@ Smoke test (pattern source, no TCC needed):
 
 ```sh
 cargo build -p thunderlink
-# terminal 1 (or hub op=start, name=tl-target, ready log "listening for initiator"):
-./target/debug/thunderlink target --windowed --no-input
-# terminal 2:
+./target/debug/thunderlink initiator --discover --source test-pattern \
+    --res 1920x1080 --fps 60 --frames 300
+# expect: "discovered target ...", ~60 fps decoded, exit 0 both sides.
+# (or --connect 127.0.0.1 instead of --discover)
 ./target/debug/thunderlink initiator --connect 127.0.0.1 \
     --source test-pattern --res 1920x1080 --fps 60 --frames 300
 # expect: initiator exit 0, logs "target: ~57-59 fps decoded, rtt ...";
@@ -157,15 +163,16 @@ reports in NOTES/git history):
 4. **Windows platform crates** (`tl-windows-*`): IddCx driver (fork
    VirtualDrivers/Virtual-Display-Driver), DXGI DD capture, MFT/D3D11VA,
    SendInput. Start EV code-signing cert procurement NOW (weeks of lead).
-5. Wire `discovery`/mDNS into the binary (currently --connect direct IP
-   only; Announcer/Browser are implemented and tested in tl-net, unused).
+5. ~~Wire `discovery`/mDNS into the binary~~ **done 2026-09-01 night**
+   (target announces; `--discover` on initiator; addr probing; probe-proof
+   accept loop).
 6. Audio (Opus, SPEC absent — add SPEC section first), USB/IP (v2),
    adaptive bitrate ladder hooks (Report is wired; policy not implemented).
-7. Housekeeping: README (incl. documented no-auth threat model), render
+7. Housekeeping: ~~README~~ **done** (incl. no-auth threat model); render
    crate core-foundation 0.10 → objc2-core-foundation consistency nit.
 
 ## 8. Known open risks (verbatim from NOTES.md — keep it current)
 
 Private CGVirtualDisplay fragility · macOS TB bridge bandwidth cap ·
-loopback fps is kernel-bound · no auth on wire (owner-accepted, document at
-release) · real-hardware validation pending.
+loopback fps is kernel-bound · no auth on wire (owner-accepted, documented
+in README) · real-hardware validation pending.

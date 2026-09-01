@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+tl-proto = { path = "crates/tl-proto" }
+tl-net = { path = "crates/tl-net" }
+tl-session = { path = "crates/tl-session" }
+tl-video = { path = "crates/tl-video" }
+tl-macos-capture = { path = "crates/tl-macos-capture" }
+tl-macos-render = { path = "crates/tl-macos-render" }
+tl-macos-input = { path = "crates/tl-macos-input" }
+tl-macos-display = { path = "crates/tl-macos-display" }
+
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+clap = { version = "4", features = ["derive"] }
+socket2 = "0.6"
+if-addrs = "0.13"
+mdns-sd = "0.13"
+parking_lot = "0.12"
+
+[profile.release]
+debug = true
+lto = "thin"

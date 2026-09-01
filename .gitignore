@@ -1,0 +1,6 @@
+# Rust build output (root and per-crate target dirs)
+target/
+
+# Local scratch
+*.swp
+.DS_Store

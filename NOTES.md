@@ -73,6 +73,10 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   audit-hardened behaviors (NACK retention/revive, supersede discard,
   heartbeat echo RTT, 5 s silence teardown, NV12-preferred decode,
   wall-clock pts). Committed per stage.
+- Handoff 2026-09-01 eve: full state dumped to HANDOFF.md (repo map,
+  validation recipes, load-bearing conventions, environment facts, agent
+  history, prioritized next steps). Tree clean at 13 commits; 66/66 tests,
+  0 clippy warnings. Next operator: read HANDOFF.md first.
 
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated

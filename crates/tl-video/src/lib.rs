@@ -23,6 +23,8 @@ pub mod chan {
         slot: Mutex<(u64, Option<T>)>,
         cv: Condvar,
         closed: AtomicBool,
+        /// Live `Sender` clones; the last drop closes the channel.
+        senders: AtomicU64,
     }
 
     /// Latest-wins channel endpoint: sending replaces any pending value;
@@ -41,6 +43,7 @@ pub mod chan {
             slot: Mutex::new((0, None)),
             cv: Condvar::new(),
             closed: AtomicBool::new(false),
+            senders: AtomicU64::new(1),
         });
         (Sender { shared: shared.clone() }, Receiver { shared, seen: 0 })
     }
@@ -91,7 +94,19 @@ pub mod chan {
 
     impl<T> Clone for Sender<T> {
         fn clone(&self) -> Self {
+            self.shared.senders.fetch_add(1, Ordering::SeqCst);
             Self { shared: self.shared.clone() }
+        }
+    }
+
+    impl<T> Drop for Sender<T> {
+        fn drop(&mut self) {
+            // Last producer gone (e.g. screen-capture callback released at
+            // teardown): close so the receiver's `is_closed()` fires instead
+            // of idling until an external stop flag.
+            if self.shared.senders.fetch_sub(1, Ordering::SeqCst) == 1 {
+                self.close();
+            }
         }
     }
 }

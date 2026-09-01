@@ -485,6 +485,12 @@ impl VideoRx {
             return;
         };
         if f.nacked {
+            // Already dropped+NACKed; only honor the discard request so a
+            // grace-retained frame is never completed after a newer one
+            // (latest-wins, SPEC §5).
+            if discard {
+                self.frames.remove(&seq);
+            }
             return;
         }
         f.nacked = true;
@@ -970,6 +976,34 @@ mod tests {
         let mut want = vec![0x11; 16];
         want.extend_from_slice(&[0x22; 16]);
         assert_eq!(u.data, want);
+        assert_eq!(rx.stats().frames_complete, 1);
+    }
+
+    #[test]
+    fn nacked_frame_discarded_when_superseded() {
+        // Regression: a grace-retained (NACKed) frame must be removed when
+        // a newer frame_seq arrives; its late retransmit must never complete
+        // a stale frame after the newer one (latest-wins, SPEC §5).
+        let mut rx = VideoRx::bind(loopback()).unwrap();
+        let rx_addr = rx.local_addr().unwrap();
+        let raw = UdpSocket::bind(loopback()).unwrap();
+
+        send_frag_to(&raw, rx_addr, 5, 0, 2, 0x55);
+        // 33 ms rule → dropped + NACKed, buffer retained for grace.
+        assert!(rx.poll(Duration::from_millis(150)).unwrap().is_none());
+        assert_eq!(rx.stats().frames_dropped, 1);
+
+        // Newer complete frame arrives → frame 5 must be discarded now.
+        send_frag_to(&raw, rx_addr, 6, 0, 1, 0x66);
+        let u = rx
+            .poll(Duration::from_millis(300))
+            .unwrap()
+            .expect("newer frame completes");
+        assert_eq!(u.data, vec![0x66; 16]);
+
+        // Late retransmit for the superseded frame completes nothing.
+        send_frag_to(&raw, rx_addr, 5, 1, 2, 0x77);
+        assert!(rx.poll(Duration::from_millis(150)).unwrap().is_none());
         assert_eq!(rx.stats().frames_complete, 1);
     }
 

@@ -206,7 +206,7 @@ mod platform {
                         n += 1;
                         if n.is_multiple_of(120) {
                             let lat_ms = (tl_proto::time::now_us() - f.pts_us()) as f64 / 1000.0;
-                            log::info!("frame {n}: glass-to-glass ~{lat_ms:.1} ms");
+                            log::info!("frame {n}: encode-to-decode ~{lat_ms:.1} ms");
                         }
                         submit.submit(f);
                     }
@@ -229,23 +229,35 @@ mod platform {
                 let _ = chan.set_read_timeout(Some(Duration::from_millis(500)));
                 let mut last_bytes = 0u64;
                 let mut last_frames = 0u64;
+                let mut send_tick = false; // 500 ms wakeups -> 1 s cadence (SPEC §4)
+                let mut last_recv = std::time::Instant::now();
+                let mut rtt_us = 0u32;
                 while !stop.load(Ordering::Relaxed) {
-                    let _ = chan.send(&Msg::Heartbeat { ts_us: tl_proto::time::now_us() });
-                    let bytes = counters.bytes.load(Ordering::Relaxed);
-                    let frames = counters.frames_in.load(Ordering::Relaxed);
-                    let _ = chan.send(&Msg::Stats(StatsReport {
-                        decoded_fps: ((frames - last_frames) * 2) as u32, // 500 ms tick
-                        bitrate_kbps: ((bytes - last_bytes) * 8 * 2 / 1000) as u32,
-                        ..Default::default()
-                    }));
-                    last_bytes = bytes;
-                    last_frames = frames;
+                    if send_tick {
+                        let _ = chan.send(&Msg::Heartbeat { ts_us: tl_proto::time::now_us() });
+                        let bytes = counters.bytes.load(Ordering::Relaxed);
+                        let frames = counters.frames_in.load(Ordering::Relaxed);
+                        let _ = chan.send(&Msg::Stats(StatsReport {
+                            decoded_fps: (frames - last_frames) as u32, // per 1 s tick
+                            bitrate_kbps: ((bytes - last_bytes) * 8 / 1000) as u32,
+                            rtt_us,
+                            ..Default::default()
+                        }));
+                        last_bytes = bytes;
+                        last_frames = frames;
+                    }
+                    send_tick = !send_tick;
                     match chan.recv() {
+                        Ok(Msg::Heartbeat { ts_us }) => {
+                            // Echo of our own heartbeat: RTT probe result.
+                            rtt_us = (tl_proto::time::now_us() - ts_us).max(0) as u32;
+                            last_recv = std::time::Instant::now();
+                        }
                         Ok(Msg::Stop) | Ok(Msg::Bye) => {
                             log::info!("session ended by initiator");
                             break;
                         }
-                        Ok(_) => {}
+                        Ok(_) => last_recv = std::time::Instant::now(),
                         Err(e)
                             if e.kind() == std::io::ErrorKind::TimedOut
                                 || e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -253,6 +265,11 @@ mod platform {
                             log::warn!("control channel: {e}");
                             break;
                         }
+                    }
+                    // Liveness: tear down on 5 s of silence (SPEC §4).
+                    if last_recv.elapsed() > Duration::from_secs(5) {
+                        log::warn!("control channel silent for 5 s; tearing down");
+                        break;
                     }
                 }
                 stop.store(true, Ordering::SeqCst);
@@ -482,9 +499,11 @@ mod platform {
                 let chan = sess.channel();
                 let _ = chan.set_read_timeout(Some(Duration::from_millis(500)));
                 let mut last_hb = 0i64;
+                let mut last_recv = std::time::Instant::now();
                 while !stop.load(Ordering::Relaxed) {
                     match chan.recv() {
                         Ok(Msg::Heartbeat { ts_us }) => {
+                            last_recv = std::time::Instant::now();
                             if ts_us != last_hb {
                                 // Echo for RTT measurement on the target.
                                 let _ = chan.send(&Msg::Heartbeat { ts_us });
@@ -492,14 +511,16 @@ mod platform {
                             }
                         }
                         Ok(Msg::Stats(s)) => {
+                            last_recv = std::time::Instant::now();
                             log::info!(
-                                "target: {} fps decoded, {} kbps",
+                                "target: {} fps decoded, {} kbps, rtt {} us",
                                 s.decoded_fps,
-                                s.bitrate_kbps
+                                s.bitrate_kbps,
+                                s.rtt_us
                             );
                         }
                         Ok(Msg::Stop) | Ok(Msg::Bye) => break,
-                        Ok(_) => {}
+                        Ok(_) => last_recv = std::time::Instant::now(),
                         Err(e)
                             if e.kind() == std::io::ErrorKind::TimedOut
                                 || e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -507,6 +528,11 @@ mod platform {
                             log::warn!("control channel: {e}");
                             break;
                         }
+                    }
+                    // Liveness: tear down on 5 s of silence (SPEC §4).
+                    if last_recv.elapsed() > Duration::from_secs(5) {
+                        log::warn!("control channel silent for 5 s; tearing down");
+                        break;
                     }
                 }
                 stop.store(true, Ordering::SeqCst);
@@ -531,7 +557,15 @@ mod platform {
                 if force_idr {
                     encoder.request_idr();
                 }
-                let units = encoder.encode(frame)?;
+                // Wall-clock stamp BEFORE encode (source pts domains differ:
+                // test-pattern is zero-based, SCK is host-clock). pts flows
+                // untouched through VT decode, so the target's log measures
+                // encode-to-decode latency in one comparable domain.
+                let t0 = tl_proto::time::now_us();
+                let mut units = encoder.encode(frame)?;
+                for u in &mut units {
+                    u.pts_us = t0;
+                }
                 frames_sent.fetch_add(1, Ordering::Relaxed);
                 Ok(units)
             },

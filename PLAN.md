@@ -221,10 +221,15 @@ If unreadable, synthesize a standard EDID matching the panel's native mode.
 ---
 
 ## 6. Audio (v1.1)
-Initiator creates a virtual audio device (BlackHole/Loopback on macOS,
-VB-Cable-style on Windows, PipeWire/Pulse sink on Linux) → Opus encode →
-same UDP channel family → target plays locally. 48 kHz stereo Opus @
-128–256 kbps. Lip-sync via shared RTP timestamps with video.
+Initiator captures its system audio with a native OS path — Core Audio
+process tap on macOS 14.2+ (public API, no third-party loopback driver;
+updated 2026-09: the original BlackHole/Loopback assumption is obsolete),
+WASAPI loopback on Windows, PipeWire sink-monitor on Linux — Opus encode
+→ dedicated UDP channel (port 47780) → target plays locally. 48 kHz
+stereo Opus @ 128–256 kbps, 10 ms frames, in-band FEC, no retransmit.
+Full contract: SPEC §12 (written before implementation, 2026-09-01).
+Lip-sync via shared wall-clock pts with video; drift measured in v1.1,
+corrected in v2.
 
 ## 7. USB device redirection (target's ports serve the initiator)
 

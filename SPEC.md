@@ -30,6 +30,7 @@ live in `crates/tl-proto` (authoritative); this document defines behavior.
 | Video | UDP | 47777 (`VIDEO_PORT`) | initiator → target |
 | Feedback | UDP | 47778 (`FEEDBACK_PORT`) | target → initiator |
 | Input | UDP | 47779 (`INPUT_PORT`) | target → initiator |
+| Audio (v1.1, §12) | UDP | 47780 (`AUDIO_PORT`) | initiator → target |
 
 Discovery: mDNS service `_thunderlink._tcp.local.` (`MDNS_SERVICE_TYPE`),
 TXT record `role=initiator|target`. Announced on Thunderbolt interfaces.
@@ -170,3 +171,75 @@ Each crate's `src/lib.rs` contains its pinned public API. Rules for all:
 127.0.0.1 --source test-pattern` on the same Mac: target window presents
 the animated pattern at 60 fps with end-to-end latency logged < 50 ms
 (localhost), no TCC prompts, all workspace tests green.
+
+## 12. Audio (v1.1 — CONTRACT DEFINED, NOT YET IMPLEMENTED)
+
+This section is the implementation contract for audio (PLAN §6). It is
+deliberately written BEFORE any audio code exists; `tl-proto` types and
+constants named here land together with the implementation (wire changes
+keep SPEC + `tl-proto` in the same commit, per repo convention).
+
+### 12.1 Scope
+
+- One direction: initiator's system audio → target's default output.
+  Microphone backchannel (target → initiator) is v2; do not design it in.
+- 48 kHz stereo, Opus, fire-and-forget UDP — no retransmits. Stale audio
+  is dropped, never delayed: audio has no NACK path by design (a 10 ms
+  frame retransmitted after a 33 ms window is worthless).
+
+### 12.2 Capture (initiator side, per OS)
+
+| OS | Mechanism | Notes |
+|---|---|---|
+| macOS | Core Audio process tap (`AudioHardwareCreateProcessTap` + aggregate device, public since 14.2) | Whole-system tap, unmuted; requires the audio-capture TCC grant (`NSAudioCaptureUsageDescription` for bundled apps); NO third-party loopback driver |
+| Linux | PipeWire monitor of the default sink | zero extra deps on modern distros |
+| Windows | WASAPI loopback capture | IAudioClient loopback mode |
+
+All paths deliver 48 kHz stereo float PCM frames of exactly 10 ms
+(480 samples) to the encoder.
+
+### 12.3 Codec
+
+Opus 48 kHz stereo: frame duration 10 ms (100 packets/s), VBR, target
+128–256 kbps (default 192), in-band FEC ON (cheap loss resilience — no
+retransmit path), DTX ON for silence, complexity 5 (real-time safe).
+
+### 12.4 Wire format
+
+UDP datagrams of a fixed 16-byte header + Opus payload:
+
+- `u32 le` magic `"TLA1"`
+- `u32 le` `seq` (wrapping, per packet)
+- `i64 le` `pts_us` — WALL-CLOCK µs (`tl_proto::time::now_us`), stamped at
+  capture time. Same time domain as video `pts_us`: this is the A/V sync
+  anchor (PLAN §6 "lip-sync via shared timestamps").
+- payload: one Opus packet.
+
+Packets exceeding the path MTU budget (1400) are impossible at these
+bitrates (192 kbps × 10 ms ≈ 240 B) — no fragmentation defined.
+
+### 12.5 Playback (target side)
+
+- Adaptive jitter buffer 20–60 ms (start 40 ms): deliver in-flight order
+  by `seq`; drop anything older than the newest played `pts_us` minus the
+  buffer depth. Conceal gaps with Opus PLC (decode with a NULL packet).
+- Output: default system output device at 48 kHz stereo.
+- v1.1 measures and logs per-second A/V drift (audio pts vs video pts at
+  presentation). Correction (resample/drop) is explicitly v2 — measure
+  first.
+
+### 12.6 Negotiation (control channel)
+
+- `TargetCaps` gains `accepts_audio: bool` (target has an output path).
+- `StreamConfig` gains `audio: bool` and `audio_bitrate_kbps: Option<u32>`.
+- Target rejects `audio: true` with `accepts_audio: false` via the normal
+  Config Ack failure path.
+- Audio starts with video at `Start`; both paths tear down on Stop/Bye.
+  `Feedback::Report` gains nothing in v1.1 (audio loss is concealed, not
+  reported; revisit with the adaptive ladder).
+
+### 12.7 Validation bar (definition of done when implemented)
+
+Loopback: `--source test-pattern` plus a synthetic 1 kHz sine "tone
+source" (no TCC needed) → target logs ≥ 95 % of packets played, gap-free
+PLC accounting, drift < ±5 ms over 60 s, and no regression to §11.

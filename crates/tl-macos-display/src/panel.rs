@@ -88,6 +88,17 @@ pub fn main_display_points() -> Result<(f64, f64)> {
     Ok((size.width, size.height))
 }
 
+/// Frame (origin x/y + size, points, global display coordinates) of any
+/// display. Used to aim input injection at a virtual display, which
+/// WindowServer places at an offset in the desktop layout.
+pub fn display_frame(display_id: u32) -> Result<(f64, f64, f64, f64)> {
+    let bounds = CGDisplay::new(display_id).bounds();
+    if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
+        bail!("CGDisplayBounds of display {display_id} has non-positive size");
+    }
+    Ok((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height))
+}
+
 /// EDID of the main display: iterate `IODisplayConnect` registry services
 /// and match on DisplayVendorID/DisplayProductID (plus DisplaySerialNumber
 /// when both sides report a non-zero serial) against the main display.

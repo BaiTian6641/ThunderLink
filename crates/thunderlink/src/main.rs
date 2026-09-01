@@ -40,6 +40,17 @@ impl From<CodecKind> for Codec {
     }
 }
 
+/// Tuning knobs for the initiator role (keeps the role fn arity sane).
+#[derive(Debug, Default)]
+struct InitiatorOpts {
+    codec: Option<CodecKind>,
+    bitrate_kbps: Option<u32>,
+    fps: Option<u32>,
+    res: Option<String>,
+    virtual_display: bool,
+    max_frames: Option<u64>,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Act as a monitor for an incoming initiator connection.
@@ -75,6 +86,11 @@ enum Cmd {
         /// Stop cleanly after N encoded frames (used by the smoke test).
         #[arg(long)]
         frames: Option<u64>,
+        /// Create a virtual display (extended desktop): the target becomes a
+        /// NEW monitor at its native resolution instead of mirroring.
+        /// With `--source screen` the virtual display is captured.
+        #[arg(long)]
+        r#virtual: bool,
     },
 }
 
@@ -83,8 +99,19 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Target { bind, windowed, no_input } => platform::run_target(bind, windowed, no_input),
-        Cmd::Initiator { connect, source, codec, bitrate_kbps, fps, res, frames } => {
-            platform::run_initiator(&connect, source, codec, bitrate_kbps, fps, res, frames)
+        Cmd::Initiator { connect, source, codec, bitrate_kbps, fps, res, frames, r#virtual } => {
+            platform::run_initiator(
+                &connect,
+                source,
+                InitiatorOpts {
+                    codec,
+                    bitrate_kbps,
+                    fps,
+                    res,
+                    virtual_display: r#virtual,
+                    max_frames: frames,
+                },
+            )
         }
     }
 }
@@ -115,6 +142,7 @@ mod platform {
     use tl_macos_capture::encode::Encoder;
     use tl_macos_capture::testsrc::TestPattern;
     use tl_macos_display::panel;
+    use tl_macos_display::virt::{VirtualDisplay, VirtualDisplayConfig};
     use tl_macos_input::inject::{Injector, Mapping};
     use tl_macos_input::tap::{EventTap, Rect};
     use tl_macos_render::decode::{decoder_caps, Decoder};
@@ -129,7 +157,7 @@ mod platform {
     };
     use tl_session::{InitiatorSession, TargetSession};
 
-    use super::{parse_connect, parse_res, CodecKind, SourceKind};
+    use super::{parse_connect, parse_res, SourceKind};
 
     const CONTROL_PORT: u16 = tl_proto::CONTROL_PORT;
 
@@ -229,24 +257,29 @@ mod platform {
                 let _ = chan.set_read_timeout(Some(Duration::from_millis(500)));
                 let mut last_bytes = 0u64;
                 let mut last_frames = 0u64;
-                let mut send_tick = false; // 500 ms wakeups -> 1 s cadence (SPEC §4)
+                // 1 s send cadence by deadline, NOT iteration count: echoed
+                // heartbeats make some iterations near-instant, so a toggle
+                // under-counts elapsed time (halves reported fps).
+                let mut last_send = std::time::Instant::now();
                 let mut last_recv = std::time::Instant::now();
                 let mut rtt_us = 0u32;
                 while !stop.load(Ordering::Relaxed) {
-                    if send_tick {
+                    let dt = last_send.elapsed();
+                    if dt >= Duration::from_secs(1) {
                         let _ = chan.send(&Msg::Heartbeat { ts_us: tl_proto::time::now_us() });
                         let bytes = counters.bytes.load(Ordering::Relaxed);
                         let frames = counters.frames_in.load(Ordering::Relaxed);
+                        let secs = dt.as_secs_f64();
                         let _ = chan.send(&Msg::Stats(StatsReport {
-                            decoded_fps: (frames - last_frames) as u32, // per 1 s tick
-                            bitrate_kbps: ((bytes - last_bytes) * 8 / 1000) as u32,
+                            decoded_fps: ((frames - last_frames) as f64 / secs) as u32,
+                            bitrate_kbps: (((bytes - last_bytes) * 8) as f64 / secs / 1000.0) as u32,
                             rtt_us,
                             ..Default::default()
                         }));
+                        last_send = std::time::Instant::now();
                         last_bytes = bytes;
                         last_frames = frames;
                     }
-                    send_tick = !send_tick;
                     match chan.recv() {
                         Ok(Msg::Heartbeat { ts_us }) => {
                             // Echo of our own heartbeat: RTT probe result.
@@ -330,12 +363,10 @@ mod platform {
     pub fn run_initiator(
         connect: &str,
         source: SourceKind,
-        codec: Option<CodecKind>,
-        bitrate_kbps: Option<u32>,
-        fps: Option<u32>,
-        res: Option<String>,
-        max_frames: Option<u64>,
+        opts: super::InitiatorOpts,
     ) -> Result<()> {
+        let super::InitiatorOpts { codec, bitrate_kbps, fps, res, virtual_display, max_frames } =
+            opts;
         let addr = parse_connect(connect)?;
         let mut sess = InitiatorSession::connect(addr, "thunderlink-initiator")?;
         let caps = sess.caps().clone();
@@ -363,6 +394,25 @@ mod platform {
             fps_milli as f64 / 1000.0
         );
         sess.configure(&cfg)?;
+        // Extended-desktop mode: create a private-API virtual display that
+        // the OS renders onto (PLAN §4.1). It carries the target panel's
+        // native resolution; HiDPI when the target is Retina-class.
+        let mut vdisp: Option<VirtualDisplay> = None;
+        if virtual_display {
+            let vd = VirtualDisplay::create(VirtualDisplayConfig {
+                width,
+                height,
+                refresh_millihertz: fps_milli,
+                hidpi: caps.panel.scale_x100 >= 150,
+                name: "ThunderLink".into(),
+            })
+            .context("create virtual display (CGVirtualDisplay)")?;
+            log::info!("virtual display created (CGDirectDisplayID {})", vd.display_id());
+            vdisp = Some(vd);
+            // WindowServer placement is async; let it settle before reading
+            // the display's global-coordinate frame for the input mapping.
+            std::thread::sleep(Duration::from_millis(150));
+        }
 
         let peer_ip = sess.peer_addr().ip();
         let tx = Arc::new(Mutex::new(VideoTx::bind(
@@ -387,7 +437,10 @@ mod platform {
         match source {
             SourceKind::Screen => {
                 let mut c = Capturer::new(CaptureConfig {
-                    display_id: primary_display_id()?,
+                    display_id: match &vdisp {
+                        Some(vd) => vd.display_id(),
+                        None => primary_display_id()?,
+                    },
                     fps: (fps_milli / 1000).max(1),
                     queue_depth: 2,
                     show_cursor: true,
@@ -458,6 +511,26 @@ mod platform {
             })?;
         }
 
+        // Input mapping: the streamed display's rect in this machine's
+        // global coordinates — the virtual display's frame when extended,
+        // else the main display (mirror).
+        let input_map: Option<Mapping> = match &vdisp {
+            Some(vd) => match panel::display_frame(vd.display_id()) {
+                Ok((x, y, w, h)) => Some(Mapping { origin_x: x, origin_y: y, width: w, height: h }),
+                Err(e) => {
+                    log::warn!("virtual display frame unavailable ({e}); input injection disabled");
+                    None
+                }
+            },
+            None => match panel::main_display_points() {
+                Ok((w, h)) => Some(Mapping { origin_x: 0.0, origin_y: 0.0, width: w, height: h }),
+                Err(e) => {
+                    log::warn!("display geometry unavailable ({e}); input injection disabled");
+                    None
+                }
+            },
+        };
+
         // Input inject worker: UDP batches -> CGEventPost on this machine.
         {
             let stop = stop.clone();
@@ -469,13 +542,7 @@ mod platform {
                         return;
                     }
                 };
-                let map = match panel::main_display_points() {
-                    Ok((w, h)) => Mapping { origin_x: 0.0, origin_y: 0.0, width: w, height: h },
-                    Err(e) => {
-                        log::warn!("display geometry unavailable ({e}); input injection disabled");
-                        return;
-                    }
-                };
+                let Some(map) = input_map else { return }; // failure already logged
                 while !stop.load(Ordering::Relaxed) {
                     match input_rx.poll(Duration::from_millis(100)) {
                         Ok(batches) => {
@@ -585,6 +652,8 @@ mod platform {
         stop.store(true, Ordering::SeqCst);
         drop(encoder);
         drop(capturer.take());
+        // After the capturer: it references the virtual display's id.
+        drop(vdisp.take());
         let _ = ctrl_rx.recv_timeout(Duration::from_secs(2));
         log::info!("initiator exiting");
         Ok(())
@@ -593,7 +662,7 @@ mod platform {
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    use super::{CodecKind, SourceKind};
+    use super::{InitiatorOpts, SourceKind};
     use anyhow::{bail, Result};
     use std::net::IpAddr;
 
@@ -604,11 +673,7 @@ mod platform {
     pub fn run_initiator(
         _connect: &str,
         _source: SourceKind,
-        _codec: Option<CodecKind>,
-        _bitrate_kbps: Option<u32>,
-        _fps: Option<u32>,
-        _res: Option<String>,
-        _frames: Option<u64>,
+        _opts: InitiatorOpts,
     ) -> Result<()> {
         bail!("only macOS is implemented so far (see PLAN.md milestones)")
     }

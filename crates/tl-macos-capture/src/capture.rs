@@ -271,6 +271,8 @@ impl Capturer {
             )
         };
 
+        // SAFETY: SCStreamConfiguration::new returns a retained, fully
+        // initialized object owned by this Retained.
         let scfg = unsafe { SCStreamConfiguration::new() };
         // SAFETY: all setters are plain property writes on a valid object.
         unsafe {

@@ -24,7 +24,8 @@ pub const kCMVideoCodecType_HEVC: FourCharCode = u32::from_be_bytes(*b"hvc1");
 pub const kCVPixelFormatType_32BGRA: u32 = u32::from_be_bytes(*b"BGRA");
 pub const kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange: u32 = u32::from_be_bytes(*b"420v");
 pub const kCVPixelFormatType_420YpCbCr8BiPlanarFullRange: u32 = u32::from_be_bytes(*b"420f");
-pub const kCVPixelFormatType_OneComponent10: u32 = u32::from_be_bytes(*b"P010");
+pub const kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange: u32 = u32::from_be_bytes(*b"x420");
+pub const kCVPixelFormatType_420YpCbCr10BiPlanarFullRange: u32 = u32::from_be_bytes(*b"xf20");
 
 pub const kCMTimeFlags_Valid: u32 = 1 << 0;
 pub const kCMBlockBufferAssureMemoryNowFlag: u32 = 1 << 0;

@@ -206,16 +206,52 @@ fn build_pipelines(device: &ProtocolObject<dyn MTLDevice>) -> Result<Pipelines> 
 // Render context (display-link thread)
 // ---------------------------------------------------------------------------
 
-struct RenderCtx {
+/// State mutated by the render path, one display-link callback at a time.
+struct RenderFields {
     layer: Retained<CAMetalLayer>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     tex_cache: CVMetalTextureCacheRef,
     pending: Arc<Mutex<Option<DecodedFrame>>>,
     pipelines: Pipelines,
     warned_format: bool,
+    /// CVMetalTexture wrappers + owning frame of the last submitted draw.
+    /// Retaining them across the vsync satisfies CVMetalTexture.h: "Clients
+    /// should retain CVMetalTexture objects until they are done using the
+    /// images in them" — the cache must not recycle the IOSurface while the
+    /// committed drawable still reads it. Replaced (and released) by the
+    /// next frame, which is at least one vsync later.
+    held: HeldTextures,
+}
+
+/// Owned CVMetalTexture references for one rendered frame.
+struct HeldTextures {
+    refs: Vec<CVMetalTextureRef>,
+    frame: Option<DecodedFrame>,
+}
+
+impl Drop for HeldTextures {
+    fn drop(&mut self) {
+        for t in self.refs.drain(..) {
+            // SAFETY: each ref is the +1 from
+            // CVMetalTextureCacheCreateTextureFromImage in cv_metal_texture.
+            unsafe { CFRelease(t) };
+        }
+    }
+}
+
+/// Shared with the CVDisplayLink callback. The callback holds an `Arc`
+/// clone for its whole invocation, so teardown reclaims the memory only
+/// after any in-flight callback returns — no reliance on undocumented
+/// CVDisplayLinkStop callback-draining semantics.
+struct RenderCtx {
+    stopping: AtomicBool,
+    render: parking_lot::Mutex<RenderFields>,
 }
 
 /// Zero-copy texture view of one CVPixelBuffer plane via CVMetalTextureCache.
+/// Returns the Metal texture view plus the owning CVMetalTexture wrapper —
+/// the caller MUST keep the wrapper alive while the GPU may still read the
+/// image (see `HeldTextures`).
 fn cv_metal_texture(
     cache: CVMetalTextureCacheRef,
     image: CVPixelBufferRef,
@@ -223,7 +259,7 @@ fn cv_metal_texture(
     width: usize,
     height: usize,
     plane: usize,
-) -> Result<Retained<ProtocolObject<dyn MTLTexture>>> {
+) -> Result<(Retained<ProtocolObject<dyn MTLTexture>>, CVMetalTextureRef)> {
     let mut tex: CVMetalTextureRef = ptr::null_mut();
     // SAFETY: image is retained by the DecodedFrame for the call's duration;
     // out param checked for status + null.
@@ -244,30 +280,38 @@ fn cv_metal_texture(
         bail!("CVMetalTextureCacheCreateTextureFromImage failed: {status}");
     }
     // SAFETY: tex is a live CVMetalTexture; GetTexture returns its (get-rule)
-    // MTLTexture which we retain, then release the CVMetalTexture wrapper.
+    // MTLTexture which we retain. Ownership of the wrapper itself (+1 from
+    // Create) transfers to the caller.
     let raw = unsafe { CVMetalTextureGetTexture(tex) };
     let mtl = unsafe { Retained::retain(raw.cast::<ProtocolObject<dyn MTLTexture>>()) };
-    // SAFETY: tex is a live owned object.
-    unsafe { CFRelease(tex) };
-    mtl.ok_or_else(|| anyhow!("CVMetalTextureGetTexture returned null"))
+    if mtl.is_none() {
+        // SAFETY: tex is owned by us on this error path.
+        unsafe { CFRelease(tex) };
+        bail!("CVMetalTextureGetTexture returned null");
+    }
+    Ok((mtl.unwrap(), tex))
 }
 
-fn render_latest(ctx: &mut RenderCtx) -> Result<()> {
+fn render_latest(ctx: &mut RenderFields) -> Result<()> {
     let frame = ctx.pending.lock().take();
     let Some(frame) = frame else { return Ok(()) }; // no new frame this vsync
     let pb = frame.cv_pixel_buffer();
     let (w, h) = (frame.width() as usize, frame.height() as usize);
 
+    let mut held = HeldTextures { refs: Vec::new(), frame: None };
     let (tex0, tex1, pipeline) = match frame.pixel_format() {
-        kCVPixelFormatType_32BGRA => (
-            cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::BGRA8Unorm, w, h, 0)?,
-            None,
-            &ctx.pipelines.bgra,
-        ),
+        kCVPixelFormatType_32BGRA => {
+            let (t, r) = cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::BGRA8Unorm, w, h, 0)?;
+            held.refs.push(r);
+            (t, None, &ctx.pipelines.bgra)
+        }
         fmt @ (kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         | kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) => {
-            let y = cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::R8Unorm, w, h, 0)?;
-            let uv = cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::RG8Unorm, w / 2, h / 2, 1)?;
+            let (y, ry) = cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::R8Unorm, w, h, 0)?;
+            held.refs.push(ry);
+            let (uv, ruv) =
+                cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::RG8Unorm, w / 2, h / 2, 1)?;
+            held.refs.push(ruv);
             let pipe = if fmt == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
                 &ctx.pipelines.nv12_full
             } else {
@@ -275,13 +319,22 @@ fn render_latest(ctx: &mut RenderCtx) -> Result<()> {
             };
             (y, Some(uv), pipe)
         }
-        // P010: 10-bit in the high bits of 16-bit; *16Unorm sampling
-        // normalizes it exactly like the 8-bit NV12 path (SDR downconvert).
-        kCVPixelFormatType_OneComponent10 => {
-            let y = cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::R16Unorm, w, h, 0)?;
-            let uv =
+        // 10-bit 4:2:0 biplanar ('x420'/'xf20'): 10 bits in the high bits of
+        // 16; *16Unorm sampling normalizes it exactly like the 8-bit NV12
+        // path (SDR downconvert).
+        fmt @ (kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+        | kCVPixelFormatType_420YpCbCr10BiPlanarFullRange) => {
+            let (y, ry) = cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::R16Unorm, w, h, 0)?;
+            held.refs.push(ry);
+            let (uv, ruv) =
                 cv_metal_texture(ctx.tex_cache, pb, MTLPixelFormat::RG16Unorm, w / 2, h / 2, 1)?;
-            (y, Some(uv), &ctx.pipelines.nv12_video)
+            held.refs.push(ruv);
+            let pipe = if fmt == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange {
+                &ctx.pipelines.nv12_full
+            } else {
+                &ctx.pipelines.nv12_video
+            };
+            (y, Some(uv), pipe)
         }
         other => {
             if !ctx.warned_format {
@@ -322,8 +375,13 @@ fn render_latest(ctx: &mut RenderCtx) -> Result<()> {
     enc.endEncoding();
     cmd.presentDrawable(ProtocolObject::from_ref(&*drawable));
     cmd.commit();
-    // SAFETY: cache is live; flush only reaps textures not retained by
-    // in-flight command buffers, keeping IOSurface memory bounded.
+    // Swap in this frame's CVMetalTexture wrappers + owning frame; the
+    // previous generation (committed last vsync) releases now that a newer
+    // drawable has taken its place.
+    held.frame = Some(frame);
+    ctx.held = held;
+    // SAFETY: cache is live; flush only reaps texture wrappers nobody holds
+    // anymore, keeping IOSurface memory bounded.
     unsafe { CVMetalTextureCacheFlush(ctx.tex_cache, 0) };
     Ok(())
 }
@@ -336,12 +394,24 @@ extern "C" fn display_link_callback(
     _flags_out: *mut u64,
     ctx: *mut c_void,
 ) -> i32 {
-    // SAFETY: ctx points at a Box<RenderCtx> owned by run(); CVDisplayLinkStop
-    // blocks until any in-flight callback returns, and the box is reclaimed
-    // only after the link is stopped, so the pointer is always valid here.
-    let ctx = unsafe { &mut *ctx.cast::<RenderCtx>() };
+    // SAFETY: ctx is the Arc<RenderCtx> leaked into the callback context by
+    // run() via Arc::into_raw. Rebuild a temporary clone (restoring the
+    // original refcount so the raw pointer stays valid for later callbacks).
+    // The clone keeps the context alive for this whole invocation even while
+    // run() tears down, so no reliance on undocumented CVDisplayLinkStop
+    // callback-draining behavior.
+    let ctx = unsafe {
+        let arc = Arc::from_raw(ctx.cast::<RenderCtx>());
+        let clone = Arc::clone(&arc);
+        std::mem::forget(arc);
+        clone
+    };
+    if ctx.stopping.load(Ordering::Acquire) {
+        return 0;
+    }
     autoreleasepool(|_| {
-        if let Err(e) = render_latest(ctx) {
+        let mut g = ctx.render.lock();
+        if let Err(e) = render_latest(&mut g) {
             log::error!("present: render failed: {e:#}");
         }
     });
@@ -466,6 +536,12 @@ impl Presenter {
             )
         };
         window.setTitle(&NSString::from_str("ThunderLink"));
+        // objc2-app-kit contract: window creation returns an owned
+        // `Retained`, and AppKit additionally releases a closed window by
+        // default — a double free on any close path. Keep the Retained as
+        // the single owner.
+        // SAFETY: main thread; plain BOOL property setter.
+        unsafe { window.setReleasedWhenClosed(false) };
         if mode == Mode::Fullscreen {
             // Cover the menu bar: just above NSMainMenuWindowLevel (24).
             window.setLevel(25);
@@ -543,33 +619,54 @@ impl Presenter {
         self.window.makeKeyAndOrderFront(None);
 
         let app = NSApplication::sharedApplication(mtm);
-        app.activate();
-
-        let mut ctx = Box::new(RenderCtx {
-            layer: self.layer.clone(),
-            queue: self.queue.clone(),
-            tex_cache: self.tex_cache,
-            pending: self.pending.clone(),
-            pipelines: Pipelines {
-                bgra: self.pipelines.bgra.clone(),
-                nv12_video: self.pipelines.nv12_video.clone(),
-                nv12_full: self.pipelines.nv12_full.clone(),
-            },
-            warned_format: false,
+        // clippy: the objc2 Retained members are !Send by default, but the
+        // render state is only ever USED on the CVDisplayLink callback's
+        // single dedicated thread (CAMetalLayer drawables and MTLCommandQueue
+        // are documented thread-safe; the main-thread-only NSView is never
+        // touched there). run() only touches the `stopping` atomic. The
+        // Mutex exists to order teardown reclamation, not data races.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let ctx = Arc::new(RenderCtx {
+            stopping: AtomicBool::new(false),
+            render: parking_lot::Mutex::new(RenderFields {
+                layer: self.layer.clone(),
+                queue: self.queue.clone(),
+                tex_cache: self.tex_cache,
+                pending: self.pending.clone(),
+                pipelines: Pipelines {
+                    bgra: self.pipelines.bgra.clone(),
+                    nv12_video: self.pipelines.nv12_video.clone(),
+                    nv12_full: self.pipelines.nv12_full.clone(),
+                },
+                warned_format: false,
+                held: HeldTextures { refs: Vec::new(), frame: None },
+            }),
         });
-        let ctx_ptr: *mut RenderCtx = &mut *ctx;
+        // Leak one reference into the display-link callback context; it is
+        // restored below at teardown.
+        let ctx_ptr = Arc::into_raw(ctx.clone());
 
         let mut link: CVDisplayLinkRef = ptr::null_mut();
         // SAFETY: out param checked for status + null.
         let status = unsafe { CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &mut link) };
         if status != kCVReturnSuccess || link.is_null() {
+            // SAFETY: reclaim the leaked reference on this error path.
+            drop(unsafe { Arc::from_raw(ctx_ptr) });
             bail!("CVDisplayLinkCreateWithCGDisplay failed: {status}");
         }
-        // SAFETY: link is live; ctx_ptr stays valid until after
-        // CVDisplayLinkStop below.
-        unsafe { CVDisplayLinkSetOutputCallback(link, display_link_callback, ctx_ptr.cast()) };
+        // SAFETY: link is live; the callback keeps its own Arc clone alive
+        // for every invocation (see display_link_callback).
+        unsafe { CVDisplayLinkSetOutputCallback(link, display_link_callback, ctx_ptr.cast_mut().cast()) };
         // SAFETY: link is live and has a callback.
-        unsafe { CVDisplayLinkStart(link) };
+        let status = unsafe { CVDisplayLinkStart(link) };
+        if status != kCVReturnSuccess {
+            // SAFETY: reclaim the leaked reference on this error path.
+            drop(unsafe { Arc::from_raw(ctx_ptr) });
+            // SAFETY: link was created successfully above.
+            unsafe { CVDisplayLinkStop(link) };
+            unsafe { CFRelease(link.cast()) };
+            bail!("CVDisplayLinkStart failed: {status}");
+        }
         log::info!("present: display link started ({:?})", self.mode);
 
         // Event loop on the main thread until the window closes.
@@ -610,13 +707,21 @@ impl Presenter {
             }
         }
 
-        // SAFETY: stop blocks until any in-flight callback returns; only then
-        // release the link and reclaim the render context.
+        // Halt new renders, stop the link, then drop our references. Any
+        // callback already past the stopping check holds its own Arc clone,
+        // so the render context is reclaimed only after it finishes — no
+        // use-after-free, no reliance on undocumented Stop semantics.
+        ctx.stopping.store(true, Ordering::Release);
+        // SAFETY: link is live and stopped exactly once.
         unsafe {
             CVDisplayLinkStop(link);
             CFRelease(link.cast());
         }
         drop(ctx);
+        // SAFETY: reclaim the reference leaked into the callback context;
+        // with run()'s handle dropped above, this is the final one unless a
+        // callback is still mid-invocation (which then frees it on return).
+        drop(unsafe { Arc::from_raw(ctx_ptr) });
         self.window.setDelegate(None);
         self.window.orderOut(None);
         Ok(())

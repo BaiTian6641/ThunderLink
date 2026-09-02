@@ -203,6 +203,25 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   x86_64 AppImage deferred: colima lacks --vz-rosetta on the running
   VM and restarting it would destroy tl-build's toolchain.
 
+- Ladder + Wayland + GUI-audio session (2026-09-02): adaptive bitrate
+  (SPEC §8) is now LIVE end-to-end — engine ladder (loss/jitter-driven,
+  [25%,150%] band, ×0.70/×0.85 down, ×1.15 up after 6 clean reports,
+  5 unit tests) wired through both feedback workers; encoders gained
+  runtime set_bitrate (VT AverageBitRate re-set; x264 reconfig+VBV).
+  tl-linux-capture gained PortalCapturer (agent-built, verified 23/23
+  in container): zbus 5 portal ScreenCast + pipewire-rs 0.8, consent
+  dialog = Linux's permission flow, six format conversions to BGRA,
+  dmabuf fallback; Wayland initiator capture is COMPLETE (live test
+  needs compositor + portal backend — documented, container can't run
+  it). GUI: Play-audio toggle (target), Audio radios off/tone/system
+  (initiator), DMG rebuilt. Docker Desktop replaced colima (old
+  tl-build vanished): container re-provisioned on ubuntu:26.04; the
+  22.04 pull needs /Applications/Docker.app/Contents/Resources/bin on
+  PATH for the credential helper. x264_encoder_reconfig takes *mut,
+  x264_encoder_parameters returns void (bindgen quirk). Agent fixed a
+  real latent break: encode.rs test missed the audio StreamConfig
+  fields from 5cadfac. Workspace 101/101, clippy 0 both platforms.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

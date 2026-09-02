@@ -259,6 +259,22 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   amd64 is now PRIMARY (most TB/USB4 systems are x86_64), aarch64 is
   secondary (--arm flag); universal.sh rebuilt with fixed x86_64.
 
+- x86_64 AppImage rebuilt from scratch (2026-09-02, second segfault
+  fix): the previous attempt had TWO fatal flaws — (1) wrong runtime
+  size (extracted 162608 bytes from linuxdeploy, but the actual ELF is
+  193728 bytes; the extra 31120 bytes were linuxdeploy's own squashfs
+  garbage baked in between our runtime and our squashfs), and (2)
+  incomplete dependencies (linuxdeploy crashed under QEMU partway,
+  leaving libx264.so.164 and others undeployed). Rebuild: fresh
+  ubuntu:24.04 amd64 container, full toolchain (libclang-dev, cmake,
+  libx264-dev, libpipewire-0.3-dev, libspa-0.2-dev), cargo build,
+  ldd-based recursive dep deployment (128 libraries, all resolved),
+  mksquashfs (105 MB), concatenated with official appimagetool runtime
+  (944632 bytes, ELF-size mode). VERIFIED: window 960x720 via xwininfo,
+  zero missing ldd deps, ELF end == squashfs start. QEMU can't test
+  final AppImage (static-pie exec limitation on M1) — content verified,
+  real hardware should work. Containers freed after build.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

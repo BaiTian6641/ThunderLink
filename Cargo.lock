@@ -920,6 +920,7 @@ dependencies = [
  "anyhow",
  "log",
  "parking_lot",
+ "serde",
  "tl-macos-capture",
  "tl-macos-display",
  "tl-macos-input",

@@ -1,0 +1,346 @@
+//! ThunderLink desktop app: Tauri shell over `thunderlink-engine`.
+//!
+//! UI CONTRACT (invoked from the webview; see src/ frontend):
+//!   get_status() -> { running: bool, role: "target"|"initiator"|null }
+//!   get_permissions() -> { screen_recording: bool, accessibility: bool,
+//!                          platform: string }
+//!   list_targets(timeout_secs) -> [{ name, addrs: [string], port }]
+//!   start_target({ windowed, no_input }) -> ok / Err(String)
+//!   start_initiator({ addr?, discover, source, codec?, bitrate_kbps?,
+//!                     fps?, res?, virtual_display }) -> ok / Err(String)
+//!   stop_session() -> ok
+//! Events (channel "engine://event"): JSON of thunderlink_engine::
+//! EngineEvent — externally tagged serde enum:
+//!   {"Negotiated":{...StreamConfig}} | {"Streaming":null}
+//!   {"Stats":{...StatsReport}} | {"LatencyMs":12.3}
+//!   {"Ended":"reason"} | {"Warn":"message"}
+//! Events (channel "engine://state"): { running: bool, role: ... }
+
+use std::net::SocketAddr;
+use parking_lot::Mutex;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager, State};
+use thunderlink_engine::{
+    announce_target, browse_targets, discover_target, run_initiator, run_target, CancelToken,
+    EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig,
+};
+use tl_proto::CONTROL_PORT;
+
+/// One live role execution (the app is single-session).
+struct Session {
+    role: &'static str,
+    cancel: CancelToken,
+}
+
+#[derive(Default)]
+struct AppState {
+    session: Mutex<Option<Session>>,
+}
+
+#[derive(Serialize, Clone)]
+struct Status {
+    running: bool,
+    role: Option<&'static str>,
+}
+
+#[derive(Serialize, Clone)]
+struct Permissions {
+    screen_recording: bool,
+    accessibility: bool,
+    platform: String,
+}
+
+#[derive(Serialize, Clone)]
+struct TargetInfo {
+    name: String,
+    addrs: Vec<String>,
+    port: u16,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitiatorOptions {
+    /// "host[:port]"; with discover=true this is ignored.
+    addr: Option<String>,
+    discover: bool,
+    /// "test-pattern" | "screen"
+    source: String,
+    /// "hevc" | "h264"
+    codec: Option<String>,
+    bitrate_kbps: Option<u32>,
+    fps: Option<u32>,
+    /// "WxH"
+    res: Option<String>,
+    virtual_display: bool,
+}
+
+fn status_of(state: &AppState) -> Status {
+    let g = state.session.lock();
+    Status {
+        running: g.is_some(),
+        role: g.as_ref().map(|s| s.role),
+    }
+}
+
+fn emit_state(app: &AppHandle, st: Status) {
+    let _ = app.emit("engine://state", st);
+}
+
+#[tauri::command]
+fn get_status(state: State<'_, AppState>) -> Status {
+    status_of(&state)
+}
+
+#[tauri::command]
+fn get_permissions() -> Permissions {
+    Permissions {
+        screen_recording: preflight_screen_recording(),
+        accessibility: accessibility_trusted(),
+        platform: std::env::consts::OS.to_string(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod tcc {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    pub fn screen_recording() -> bool {
+        // SAFETY: nullary C function, no preconditions.
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+    pub fn accessibility() -> bool {
+        // SAFETY: nullary C function, no preconditions.
+        unsafe { AXIsProcessTrusted() }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod tcc {
+    pub fn screen_recording() -> bool {
+        true
+    }
+    pub fn accessibility() -> bool {
+        true
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn preflight_screen_recording() -> bool {
+    tcc::screen_recording()
+}
+#[cfg(not(target_os = "macos"))]
+fn preflight_screen_recording() -> bool {
+    true
+}
+#[cfg(target_os = "macos")]
+fn accessibility_trusted() -> bool {
+    tcc::accessibility()
+}
+#[cfg(not(target_os = "macos"))]
+fn accessibility_trusted() -> bool {
+    true
+}
+
+#[tauri::command]
+async fn list_targets(timeout_secs: u64) -> Result<Vec<TargetInfo>, String> {
+    let peers = tauri::async_runtime::spawn_blocking(move || {
+        browse_targets(Duration::from_secs(timeout_secs))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(peers
+        .into_iter()
+        .map(|p| TargetInfo {
+            name: p.name,
+            addrs: p.addrs.into_iter().map(|a| a.to_string()).collect(),
+            port: p.port,
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn start_target(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    windowed: bool,
+    no_input: bool,
+) -> Result<(), String> {
+    if state.session.lock().is_some() {
+        return Err("a session is already running".into());
+    }
+    let cancel = CancelToken::new();
+    *state.session.lock() = Some(Session { role: "target", cancel: cancel.clone() });
+    emit_state(&app, status_of(&state));
+
+    let app2 = app.clone();
+    std::thread::Builder::new()
+        .name("tl-target".into())
+        .spawn(move || {
+            // Announce until the session ends (SPEC §3); non-fatal.
+            let announcer = announce_target("thunderlink-target")
+                .map_err(|e| log::warn!("mDNS announce failed ({e})"))
+                .ok();
+            let (sink, rx) = EventSink::channel();
+            // Pump events on a dedicated thread; the role needs the thread.
+            let app3 = app2.clone();
+            std::thread::spawn(move || {
+                for ev in rx {
+                    let _ = app3.emit("engine://event", &ev);
+                }
+            });
+            let r = run_target(
+                TargetConfig {
+                    bind: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    windowed,
+                    no_input,
+                    cancel,
+                },
+                &sink,
+            );
+            drop(announcer);
+            if let Err(e) = r {
+                log::error!("target role ended: {e:#}");
+                let _ = app2.emit(
+                    "engine://event",
+                    &EngineEvent::Ended(format!("error: {e:#}")),
+                );
+            }
+            // NOTE: session slot cleared by the outer state watcher below.
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn start_initiator(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    opts: InitiatorOptions,
+) -> Result<(), String> {
+    if state.session.lock().is_some() {
+        return Err("a session is already running".into());
+    }
+    let addr: SocketAddr = if opts.discover {
+        discover_target(Duration::from_secs(10)).map_err(|e| e.to_string())?
+    } else {
+        let raw = opts.addr.clone().unwrap_or_default();
+        if raw.contains(':') {
+            raw.parse().map_err(|e| format!("invalid address: {e}"))?
+        } else {
+            SocketAddr::new(
+                raw.parse().map_err(|e| format!("invalid host: {e}"))?,
+                CONTROL_PORT,
+            )
+        }
+    };
+    let source = match opts.source.as_str() {
+        "screen" => Source::Screen,
+        _ => Source::TestPattern,
+    };
+    let codec = match opts.codec.as_deref() {
+        Some("h264") => Some(tl_proto::Codec::H264),
+        Some(_) => Some(tl_proto::Codec::Hevc),
+        None => None,
+    };
+    let res = opts.res.as_deref().and_then(|r| {
+        let (w, h) = r.split_once('x')?;
+        Some((w.parse().ok()?, h.parse().ok()?))
+    });
+
+    let cancel = CancelToken::new();
+    *state.session.lock() = Some(Session { role: "initiator", cancel: cancel.clone() });
+    emit_state(&app, status_of(&state));
+
+    let app2 = app.clone();
+    std::thread::Builder::new()
+        .name("tl-initiator".into())
+        .spawn(move || {
+            let (sink, rx) = EventSink::channel();
+            let app3 = app2.clone();
+            std::thread::spawn(move || {
+                for ev in rx {
+                    let _ = app3.emit("engine://event", &ev);
+                }
+            });
+            let r = run_initiator(
+                InitiatorConfig {
+                    addr,
+                    source,
+                    codec,
+                    bitrate_kbps: opts.bitrate_kbps,
+                    fps: opts.fps,
+                    res,
+                    virtual_display: opts.virtual_display,
+                    max_frames: None,
+                    cancel,
+                },
+                &sink,
+            );
+            if let Err(e) = r {
+                log::error!("initiator role ended: {e:#}");
+                let _ = app2.emit(
+                    "engine://event",
+                    &EngineEvent::Ended(format!("error: {e:#}")),
+                );
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_session(state: State<'_, AppState>) -> Result<(), String> {
+    let g = state.session.lock();
+    if let Some(s) = g.as_ref() {
+        s.cancel.cancel();
+    }
+    Ok(())
+}
+
+/// Session-slot watchdog: when a role thread finishes it cannot reach the
+/// managed state, so it emits Ended; the webview calls stop_session and
+/// this clears the slot. Simplest correct cleanup: poll on a sidecar
+/// thread started once at launch.
+fn spawn_slot_cleaner(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let state = app.state::<AppState>();
+        let g = state.session.lock();
+        if let Some(s) = g.as_ref() {
+            if s.cancel.is_cancelled() {
+                drop(g);
+                *state.session.lock() = None;
+                emit_state(&app, status_of(&state));
+            }
+        }
+    });
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    tauri::Builder::default()
+        .manage(AppState::default())
+        .setup(|app| {
+            spawn_slot_cleaner(app.handle().clone());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_status,
+            get_permissions,
+            list_targets,
+            start_target,
+            start_initiator,
+            stop_session
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

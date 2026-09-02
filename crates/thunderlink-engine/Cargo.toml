@@ -9,6 +9,7 @@ tl-proto = { workspace = true }
 tl-net = { workspace = true }
 tl-session = { workspace = true }
 tl-video = { workspace = true }
+serde = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }

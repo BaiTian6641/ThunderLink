@@ -28,6 +28,9 @@ impl CancelToken {
         Self::default()
     }
 
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     pub fn is_cancelled(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -35,9 +38,8 @@ impl CancelToken {
 
 /// Structured progress for embedders (UI state machines). Emitted
 /// best-effort; the sink never blocks the streaming path.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub enum EngineEvent {
-    /// Control handshake finished; this is the agreed stream shape.
     Negotiated(StreamConfig),
     /// Video path open; frames are flowing.
     Streaming,
@@ -161,6 +163,30 @@ pub fn discover_target(timeout: Duration) -> Result<SocketAddr> {
         // Keep browsing: the peer may re-resolve with better addresses.
     }
     bail!("no ThunderLink target found via mDNS within {timeout:?}")
+}
+
+/// Enumerate ThunderLink targets visible via mDNS for up to `timeout`,
+/// returning every distinct role=target peer resolved (for UI pickers).
+pub fn browse_targets(timeout: Duration) -> Vec<tl_net::discovery::Peer> {
+    use tl_net::discovery::{Browser, DiscoveryEvent};
+    use tl_proto::Role;
+
+    let Ok(browser) = Browser::start() else {
+        return Vec::new();
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    let mut out: Vec<tl_net::discovery::Peer> = Vec::new();
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        let Some(event) = browser.next_event(remaining) else { break };
+        let DiscoveryEvent::Added(peer) = event else { continue };
+        if peer.role == Role::Target
+            && !out.iter().any(|p| p.name == peer.name && p.addrs == peer.addrs)
+        {
+            log::info!("target discovered: {:?} at {:?}", peer.name, peer.addrs);
+            out.push(peer);
+        }
+    }
+    out
 }
 
 /// Connection candidates in priority order: IPv4 first, then global

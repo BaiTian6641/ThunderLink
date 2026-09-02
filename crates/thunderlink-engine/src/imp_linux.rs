@@ -12,10 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
-use tl_linux_capture::encoder::Encoder as X264Encoder;
-use tl_linux_capture::frame::RawFrame;
-use tl_linux_capture::screen::ScreenCapturer;
-use tl_linux_capture::testsrc::TestPattern;
+use tl_linux_capture::{Encoder as X264Encoder, RawFrame, ScreenCapturer, TestPattern};
 use tl_linux_input::inject::Injector;
 use tl_net::feedback::FeedbackChannel;
 use tl_net::input_chan::InputRx;
@@ -26,7 +23,7 @@ use tl_proto::{
 };
 use tl_session::InitiatorSession;
 
-use super::ctrl::{set_reason, spawn_initiator_control_worker, EndReason};
+use super::ctrl::{spawn_initiator_control_worker, EndReason};
 use super::{EventSink, InitiatorConfig, Source};
 
 fn any() -> IpAddr {
@@ -99,6 +96,8 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         Source::TestPattern => {
             let fps_whole = (fps_milli / 1000).max(1);
             let mut tp = TestPattern::new(width, height, fps_whole);
+            let stop = stop.clone();
+            let max_frames = max_frames;
             std::thread::Builder::new().name("testsrc".into()).spawn(move || {
                 let frame_dur = Duration::from_secs_f64(1.0 / fps_whole as f64);
                 let mut next_tick = std::time::Instant::now() + frame_dur;
@@ -137,12 +136,13 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
                 cap.width(),
                 cap.height()
             );
-            let stop2 = stop.clone();
+            let stop = stop.clone();
+            let max_frames = max_frames;
             std::thread::Builder::new().name("x11grab".into()).spawn(move || {
                 let frame_dur = Duration::from_secs_f64(1.0 / fps_whole as f64);
                 let mut next_tick = std::time::Instant::now() + frame_dur;
                 let mut sent = 0u64;
-                while !stop2.load(Ordering::Relaxed) {
+                while !stop.load(Ordering::Relaxed) {
                     if let Some(max) = max_frames {
                         if sent >= max {
                             break;

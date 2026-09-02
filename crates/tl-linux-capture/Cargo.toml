@@ -1,0 +1,21 @@
+[package]
+name = "tl-linux-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tl-proto = { workspace = true }
+tl-testsrc = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# FFI layer of the x264-rs crate family. The safe `x264` wrapper (0.5)
+# exposes no way to set `b_repeat_headers` or force IDR frames, both
+# required by SPEC §5/§6, so we bind libx264 directly (same pattern as
+# the macOS crate's VideoToolbox binding).
+x264-sys = "0.2"
+# Pure-Rust X11 client; no system libs needed.
+x11rb = "0.14"

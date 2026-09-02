@@ -99,6 +99,9 @@ mod tests {
 
     #[test]
     fn detection_never_panics_with_or_without_override() {
+        // Loopback name differs by platform (macOS lo0, Linux lo).
+        let lo = if cfg!(target_os = "macos") { "lo0" } else { "lo" };
+
         // No override: may or may not find Thunderbolt interfaces, but
         // must not panic.
         let _ = thunderbolt_interfaces();
@@ -108,14 +111,14 @@ mod tests {
         assert!(thunderbolt_interfaces().is_empty());
 
         // Forced to the loopback, which always exists on macOS/Linux.
-        std::env::set_var(IFACE_ENV, "lo0");
+        std::env::set_var(IFACE_ENV, lo);
         let v = thunderbolt_interfaces();
-        assert!(v.iter().any(|i| i.name == "lo0"), "expected lo0, got {v:?}");
+        assert!(v.iter().any(|i| i.name == lo), "expected {lo}, got {v:?}");
 
         std::env::remove_var(IFACE_ENV);
         let _ = thunderbolt_interfaces();
 
-        let _ = link_local_v6("lo0");
+        let _ = link_local_v6(lo);
         assert!(link_local_v6("definitely-not-an-iface-xyz").is_none());
     }
 

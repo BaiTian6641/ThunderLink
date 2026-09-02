@@ -133,8 +133,11 @@ pub(crate) fn usage_to_keycode(usage: u16) -> Option<u16> {
 }
 
 /// Linux `KEY_*` code → USB HID usage ID, if covered by [`TABLE`].
+/// Test-only for now: the injection side maps usage → code only. The
+/// evdev capture side (docs/LINUX-PORT.md) will consume this direction.
+#[cfg(test)]
 pub(crate) fn keycode_to_usage(keycode: u16) -> Option<u16> {
-    TABLE.iter().find(|&&(_, k)| k == keycode).map(|&(u, _) => u)
+    TABLE.iter().find(|&&(_, k)| k == keycode).map(|&(u, _)| u)
 }
 
 #[cfg(test)]

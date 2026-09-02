@@ -14,6 +14,10 @@ anyhow = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tl-linux-capture = { path = "../tl-linux-capture" }
+tl-linux-input = { path = "../tl-linux-input" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tl-macos-capture = { workspace = true }
 tl-macos-render = { workspace = true }

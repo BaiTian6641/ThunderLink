@@ -222,14 +222,23 @@ mod imp;
 #[cfg(target_os = "macos")]
 pub use imp::{run_initiator, run_target, EmbeddedPresenter};
 
+#[cfg(target_os = "linux")]
+mod imp_linux;
+#[cfg(target_os = "linux")]
+pub use imp_linux::run_initiator;
+
 /// Run the target role (blocks until the session ends).
 #[cfg(not(target_os = "macos"))]
-pub fn run_target(_cfg: TargetConfig, _ev: &EventSink) -> Result<()> {
+pub fn run_target(
+    _cfg: TargetConfig,
+    _presenter: Option<std::convert::Infallible>,
+    _ev: &EventSink,
+) -> Result<()> {
     bail!("target role is not implemented on this platform yet (macOS only)")
 }
 
 /// Run the initiator role (blocks until the session ends).
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn run_initiator(_cfg: InitiatorConfig, _ev: &EventSink) -> Result<()> {
-    bail!("initiator role is not implemented on this platform yet (macOS only; Linux planned)")
+    bail!("initiator role is not implemented on this platform yet")
 }

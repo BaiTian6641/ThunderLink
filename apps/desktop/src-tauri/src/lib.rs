@@ -24,8 +24,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use thunderlink_engine::{
     announce_target, browse_targets, discover_target, run_initiator, run_target, CancelToken,
-    EmbeddedPresenter, EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig,
+    EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig,
 };
+#[cfg(target_os = "macos")]
+use thunderlink_engine::EmbeddedPresenter;
 use tl_proto::CONTROL_PORT;
 
 /// One live role execution (the app is single-session).
@@ -163,6 +165,7 @@ mod tcc {
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 mod tcc {
     pub fn screen_recording() -> bool {
         true
@@ -219,16 +222,22 @@ fn start_target(
     }
     // Sync Tauri commands run on the app MAIN thread — exactly what the
     // AppKit presenter requires. Engine workers drive it via handles.
-    let presenter = {
+    // (Linux target role is not implemented yet; run_target reports it.)
+    #[cfg(target_os = "macos")]
+    let presenter: Option<EmbeddedPresenter> = {
         let app2 = app.clone();
-        EmbeddedPresenter::new(
-            windowed,
-            std::sync::Arc::new(move |f: Box<dyn FnOnce() + Send>| {
-                let _ = app2.run_on_main_thread(f);
-            }),
+        Some(
+            EmbeddedPresenter::new(
+                windowed,
+                std::sync::Arc::new(move |f: Box<dyn FnOnce() + Send>| {
+                    let _ = app2.run_on_main_thread(f);
+                }),
+            )
+            .map_err(|e| format!("create presenter: {e:#}"))?,
         )
-        .map_err(|e| format!("create presenter: {e:#}"))?
     };
+    #[cfg(not(target_os = "macos"))]
+    let presenter: Option<std::convert::Infallible> = None;
     let cancel = CancelToken::new();
     *state.session.lock() = Some(Session { role: "target", cancel: cancel.clone() });
     emit_state(&app, status_of(&state));
@@ -256,7 +265,7 @@ fn start_target(
                     no_input,
                     cancel,
                 },
-                Some(presenter),
+                presenter,
                 &sink,
             );
             drop(announcer);

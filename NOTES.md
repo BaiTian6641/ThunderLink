@@ -153,6 +153,28 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   tauri.conf gotchas: bundle JSON is strict (trailing-brace edits broke
   it twice); keep targets ["app","dmg"].
 
+- Linux software session (2026-09-02, per owner direction): full Linux
+  initiator + AppImage desktop app, built and verified in a colima
+  Ubuntu 22.04 arm64 container (`docker exec tl-build`, see
+  scripts/build-linux-appimage.sh). Sub-agents built tl-linux-input
+  (uinput, 17/17 container tests, permission-flavored errors) and
+  tl-linux-capture (x11rb GetImage + x264-sys FFI, 9/9 + live Xvfb);
+  both personally re-verified. Engine got imp_linux (shared ctrl.rs
+  control worker) — CROSS-PLATFORM E2E VERIFIED: container initiator
+  streamed 1080p60 H.264 test-pattern to the macOS target (VT decoded,
+  '2 parameter set(s)', Metal present, clean teardown). First Linux run
+  of tl-net exposed a lo0 hardcode (fixed, portable now). AppImage
+  (99 MB, self-contained webkit2gtk, glibc 2.35 baseline) + deb + rpm
+  built; launch smoke under Xvfb mapped the 960x720 ThunderLink window.
+  Build gotchas: linuxdeploy symlinks break on the virtiofs mount ->
+  CARGO_TARGET_DIR=/tmp/tl-target; APPIMAGE_EXTRACT_AND_RUN=1 for
+  FUSE-less containers; AppImage needs PNG icons in tauri.conf (icns
+  alone fails); container npm install swaps esbuild -> re-run on Mac
+  afterwards. macOS app gained first-run auto permission prompts
+  (CGRequestScreenCaptureAccess + AXIsProcessTrustedWithOptions; verified
+  via Finder-attributed launch — System Settings auto-opens; terminal-
+  launched runs inherit the terminal's grants so no prompt fires).
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

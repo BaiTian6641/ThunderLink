@@ -78,6 +78,31 @@ Open once to pass Gatekeeper, or run
 `xattr -dr com.apple.quarantine /Applications/ThunderLink.app`.
 Notarization is planned once a signing certificate is procured.
 
+## Linux (AppImage)
+
+The desktop app and the initiator role run on Linux (aarch64 AppImage;
+x86_64 builds the same way in an amd64 container). From the Mac repo:
+
+```sh
+scripts/build-linux-appimage.sh    # colima/docker Ubuntu 22.04 container build
+```
+
+Artifacts in `apps/desktop/src-tauri/target/release/bundle/`:
+`ThunderLink_0.1.0_aarch64.AppImage` (self-contained — WebKitGTK and all
+libs bundled; needs glibc 2.35+, i.e. Ubuntu 22.04+/Debian 12+), plus
+`.deb`/`.rpm` in the container's `/tmp/tl-target/.../bundle/`. On hosts
+without FUSE, run it with `--appimage-extract-and-run`.
+
+Linux specifics:
+- The initiator is the supported role: test-pattern source (no
+  permissions) or X11 screen capture (`$DISPLAY`; Wayland portal capture
+  is planned). H.264 x264 encode (VAAPI HEVC planned).
+- Input control of the Linux machine needs `/dev/uinput`: add yourself
+  to the `input` group (`sudo usermod -aG input $USER`, re-login) or a
+  udev rule. Without it, streaming works and input is disabled with a
+  warning.
+- The target (display) role is macOS-only for now.
+
 ## Usage (CLI)
 
 Act as a monitor (target machine):

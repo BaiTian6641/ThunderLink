@@ -3,7 +3,7 @@
 For the next agent/operator. Read PLAN.md (strategy/milestones), SPEC.md
 (wire protocol + crate contracts), NOTES.md (decision/risk log) first; this
 file is the operational state dump: what exists, what is verified, how to
-prove it, and what to do next. Last updated 2026-09-02 (post-GUI: engine crate + Carbon desktop app).
+prove it, and what to do next. Last updated 2026-09-02 (post-Linux: initiator crates + AppImage).
 
 ## 1. Where we are
 
@@ -45,9 +45,13 @@ full macOS implementation of both roles, point-to-point, no crypto.
   display at the target panel's native res/HiDPI, captures it, removes it on
   teardown. Lifecycle smoke-verified (system_profiler mid-run / 0 after).
 
-**Not yet:** real Thunderbolt-link test (needs 2nd host), Linux/Windows
-implementation (Linux initiator plan ready: **docs/LINUX-PORT.md** — core,
-engine, and the Carbon UI transfer unchanged),
+**Linux initiator: IMPLEMENTED + AppImage** (built/verified in a colima
+Ubuntu 22.04 container; scripts/build-linux-appimage.sh): tl-linux-input
+(uinput), tl-linux-capture (X11 + x264 H.264), engine imp_linux; e2e
+verified container→mac target. AppImage/deb/rpm in
+apps/desktop/src-tauri/target/release/bundle/. Not yet: Wayland portal
+capture, VAAPI HEVC, Linux target role, x86_64 AppImage (amd64
+container), real TB link (needs 2nd host),
 USB/IP, packaging, any crypto, audio implementation (contract: SPEC §12).
 
 **TCC (2026-09-01 late): grants are in place and LIVE-verified.** Screen

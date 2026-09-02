@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use thunderlink_engine::{
     announce_target, browse_targets, discover_target, run_initiator, run_target, CancelToken,
-    EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig,
+    EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig, AudioSource,
 };
 #[cfg(target_os = "macos")]
 use thunderlink_engine::EmbeddedPresenter;
@@ -76,6 +76,9 @@ struct InitiatorOptions {
     /// "WxH"
     res: Option<String>,
     virtual_display: bool,
+    /// Audio: None/"off" | "sine" | "system"
+    audio: Option<String>,
+    audio_freq_hz: Option<f64>,
 }
 
 fn status_of(state: &AppState) -> Status {
@@ -216,7 +219,9 @@ fn start_target(
     state: State<'_, AppState>,
     windowed: bool,
     no_input: bool,
+    audio: Option<bool>,
 ) -> Result<(), String> {
+    let audio_playback = audio.unwrap_or(false);
     if state.session.lock().is_some() {
         return Err("a session is already running".into());
     }
@@ -263,6 +268,7 @@ fn start_target(
                     bind: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
                     windowed,
                     no_input,
+                    audio_playback,
                     cancel,
                 },
                 presenter,
@@ -343,6 +349,13 @@ fn start_initiator(
                     res,
                     virtual_display: opts.virtual_display,
                     max_frames: None,
+                    audio: match opts.audio.as_deref() {
+                        Some("sine") => Some(AudioSource::Sine {
+                            freq_hz: opts.audio_freq_hz.unwrap_or(440.0),
+                        }),
+                        Some("system") => Some(AudioSource::System),
+                        _ => None,
+                    },
                     cancel,
                 },
                 &sink,

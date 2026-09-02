@@ -53,6 +53,15 @@ CGVirtualDisplay equivalent beyond EVDI/VKMS.
 3. `tl-linux-capture`: testsrc path first (engine runs end-to-end against
    a Mac target with a synthetic source), then PipeWire screen capture,
    then VAAPI encode (x264 fallback).
+   - **Wayland path done**: `PortalCapturer` (src/portal.rs) drives the
+     xdg-desktop-portal ScreenCast session over D-Bus (zbus) and drains
+     the portal's PipeWire fd with a `pw_stream` (pipewire/libspa 0.8,
+     RAW BGRA/BGRx-family negotiation, MemPtr/MemFd buffers + dmabuf
+     mmap fallback, latest-wins into `next_frame`). The X11
+     `ScreenCapturer` stays as the Xorg/Xvfb path; consent/picker
+     dialogs are the portal's (blocking, unbounded — the Linux
+     permission flow). Live round trip: `TL_E2E=1 cargo test -p
+     tl-linux-capture portal` on a compositor+portal desktop.
 4. Engine `imp_linux.rs::run_initiator` + CLI on Linux → loopback smoke
    vs the macOS app target over a real network or the TB bridge.
 5. EVDI virtual display (extended mode) — last, needs DKMS.

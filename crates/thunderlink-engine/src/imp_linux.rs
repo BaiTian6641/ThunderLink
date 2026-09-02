@@ -186,16 +186,31 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         super::audio::spawn_audio_feeder(local, peer, source, 192, stop.clone())?;
     }
 
-    // Feedback worker: NACK retransmits / IDR requests from target.
+    // Adaptive-bitrate target shared with the encode closure (SPEC §8).
+    let bitrate_target = Arc::new(AtomicU64::new(0));
+    let base_bitrate = stream_cfg.bitrate_kbps;
+
+    // Feedback worker: NACK retransmits, IDR requests, and the adaptive
+    // bitrate ladder (SPEC §8) driven by receiver Reports.
     {
         let stop = stop.clone();
         let tx = tx.clone();
+        let bitrate_target = bitrate_target.clone();
         std::thread::Builder::new().name("feedback".into()).spawn(move || {
+            let mut ladder = super::ladder::BitrateLadder::new(base_bitrate);
             while !stop.load(Ordering::Relaxed) {
                 match fb.poll(Duration::from_millis(100)) {
                     Ok(list) => {
                         let mut g = tx.lock();
                         for f in &list {
+                            if let tl_proto::Feedback::Report { lost_packets, received_frames, jitter_us, .. } = f {
+                                if let super::ladder::LadderAction::Set(kbps) =
+                                    ladder.report(*lost_packets, *received_frames, *jitter_us)
+                                {
+                                    log::info!("adaptive bitrate: {kbps} kbps");
+                                    bitrate_target.store(kbps as u64, Ordering::SeqCst);
+                                }
+                            }
                             if let Err(e) = g.handle_feedback(f) {
                                 log::warn!("feedback handling: {e}");
                             }
@@ -246,6 +261,8 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     // Encode worker (this thread): frames -> x264 -> UDP.
     let counters = tl_video::Counters::default();
     let frames_sent = AtomicU64::new(0);
+    let mut last_bitrate = stream_cfg.bitrate_kbps;
+    let bitrate_target = bitrate_target.clone();
     let stop_enc = stop.clone();
     tl_video::run_initiator(
         &mut frame_rx,
@@ -257,6 +274,16 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
             }
             if force_idr {
                 encoder.request_idr();
+            }
+            let want_kbps = bitrate_target.load(Ordering::SeqCst) as u32;
+            if want_kbps != 0 && want_kbps != last_bitrate {
+                match encoder.set_bitrate(want_kbps) {
+                    Ok(()) => {
+                        last_bitrate = want_kbps;
+                        log::info!("encoder bitrate now {want_kbps} kbps");
+                    }
+                    Err(e) => log::warn!("set_bitrate({want_kbps}): {e}"),
+                }
             }
             // Wall-clock stamp BEFORE encode (source pts domains differ);
             // pts flows untouched through decode, so the target's log

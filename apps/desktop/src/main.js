@@ -36,7 +36,7 @@ const state = {
   perms: { screen_recording: true, accessibility: true, platform: "" },
   // The name this Mac announces as a target (Rust: announce_target()).
   announcedName: isTauri ? "thunderlink-target" : "mock-studio-display",
-  tgt: { windowed: false, forwardInput: true },
+  tgt: { windowed: false, forwardInput: true, audio: true },
   ini: {
     conn: "discover",
     addr: "",
@@ -46,6 +46,7 @@ const state = {
     fps: "",
     res: "",
     virtualDisplay: false,
+    audio: "off",
     targets: [],
     selected: null,
     scanning: false,
@@ -208,6 +209,10 @@ function targetConfigHTML() {
         <bx-toggle id="tgt-forward" label-text="Forward input" checked-text="On" unchecked-text="Off" ${ax ? "checked" : "disabled"}></bx-toggle>
         <p class="tl-helper">${ax ? "Send this Mac's keyboard and mouse to the initiator while it streams." : "Forwarding input requires the Accessibility permission."}</p>
       </div>
+      <div class="tl-field">
+        <bx-toggle id="tgt-audio" label-text="Play audio" checked-text="On" unchecked-text="Off" checked></bx-toggle>
+        <p class="tl-helper">Play the initiator's audio stream through this Mac's speakers.</p>
+      </div>
     </fieldset>
     <div class="tl-actions">
       <bx-btn kind="primary" id="start-btn" data-action="start-target">Start</bx-btn>
@@ -251,6 +256,15 @@ function initiatorConfigHTML() {
         <p class="tl-helper">Adds a virtual display so the stream becomes extra screen space instead of a mirror. Only applies to the Screen source.</p>
       </div>
       <p class="tl-helper">The test pattern needs no permissions; capturing the screen requires Screen Recording.</p>
+    </fieldset>
+    <fieldset class="tl-section">
+      <legend class="tl-section-title">Audio</legend>
+      <bx-radio-button-group id="audio-group" name="audio" value="${esc(ini.audio)}">
+        <bx-radio-button value="off" label-text="Off" ${ini.audio === "off" ? "checked" : ""}></bx-radio-button>
+        <bx-radio-button value="sine" label-text="Test tone (440 Hz)" ${ini.audio === "sine" ? "checked" : ""}></bx-radio-button>
+        <bx-radio-button value="system" label-text="This Mac's audio" ${ini.audio === "system" ? "checked" : ""}></bx-radio-button>
+      </bx-radio-button-group>
+      <p class="tl-helper">Streams Opus alongside the video (SPEC §12). The target must enable "Play audio".</p>
     </fieldset>
     <bx-accordion class="tl-section tl-advanced">
       <bx-accordion-item title-text="Advanced settings">
@@ -561,6 +575,8 @@ function wireView() {
     if (w) w.addEventListener("bx-toggle-changed", (e) => { state.tgt.windowed = e.target.checked; });
     const f = $("#tgt-forward");
     if (f) f.addEventListener("bx-toggle-changed", (e) => { state.tgt.forwardInput = e.target.checked; });
+    const au = $("#tgt-audio");
+    if (au) au.addEventListener("bx-toggle-changed", (e) => { state.tgt.audio = e.target.checked; });
   } else if (state.view === "initiator" && !state.session) {
     const conn = $("#conn-group");
     if (conn) {
@@ -595,6 +611,12 @@ function wireView() {
     }
     const vd = $("#vd-toggle");
     if (vd) vd.addEventListener("bx-toggle-changed", (e) => { state.ini.virtualDisplay = e.target.checked; });
+    const audio = $("#audio-group");
+    if (audio) {
+      audio.addEventListener("bx-radio-button-group-changed", (e) => {
+        state.ini.audio = e.detail.value;
+      });
+    }
     const codec = $("#codec-select");
     if (codec) codec.addEventListener("bx-select-selected", (e) => { state.ini.codec = e.detail.value; });
     const bitrate = $("#bitrate-input");
@@ -628,7 +650,7 @@ async function startTarget() {
   syncStartGate();
   appendLog("starting target role…");
   try {
-    await invoke("start_target", { windowed: state.tgt.windowed, noInput: !state.tgt.forwardInput });
+    await invoke("start_target", { windowed: state.tgt.windowed, noInput: !state.tgt.forwardInput, audio: state.tgt.audio });
     beginLive();
   } catch (e) {
     showRoleError(String(e));
@@ -667,6 +689,8 @@ async function startInitiator() {
     fps: intOrNull(state.ini.fps),
     res: res || null,
     virtualDisplay: state.ini.source === "screen" && state.ini.virtualDisplay,
+    audio: state.ini.audio === "off" ? null : state.ini.audio,
+    audioFreqHz: state.ini.audio === "sine" ? 440 : null,
   };
   state.busy = true;
   syncStartGate();

@@ -17,5 +17,12 @@ parking_lot = { workspace = true }
 # required by SPEC §5/§6, so we bind libx264 directly (same pattern as
 # the macOS crate's VideoToolbox binding).
 x264-sys = "0.2"
+# Wayland screencast: xdg-desktop-portal ScreenCast over D-Bus (zbus),
+# PipeWire stream + SPA pod negotiation (pipewire/libspa), fd handling
+# and the dmabuf-fallback mmap (nix).
+pipewire = "0.8"
+libspa = "0.8"
+zbus = "5"
+nix = { version = "0.29", features = ["fs", "mman"] }
 # Pure-Rust X11 client; no system libs needed.
 x11rb = "0.14"

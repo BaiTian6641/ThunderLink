@@ -236,6 +236,28 @@ impl Encoder {
 
     /// Force the next encoded frame to be an IDR (SPEC §6 `IdrRequest`
     /// path). The repeated headers guarantee SPS/PPS precede it.
+    /// Change the average bitrate at runtime (adaptive ladder, SPEC §8):
+    /// x264_encoder_reconfig applies new rc parameters from the next
+    /// frame without an encoder restart.
+    pub fn set_bitrate(&mut self, kbps: u32) -> Result<()> {
+        // SAFETY: `enc` is a live encoder owned by self (created in new,
+        // closed in Drop); `param` is a local fully initialized from the
+        // encoder's current parameters; reconfig reads it synchronously.
+        unsafe {
+            let mut param = std::mem::MaybeUninit::<x264_param_t>::uninit();
+            x264_encoder_parameters(self.enc, param.as_mut_ptr());
+            let mut param = param.assume_init();
+            param.rc.i_rc_method = X264_RC_ABR as c_int;
+            param.rc.i_bitrate = kbps as i32;
+            param.rc.i_vbv_max_bitrate = kbps as i32 * 2;
+            let rc = x264_encoder_reconfig(self.enc, &mut param);
+            if rc < 0 {
+                bail!("x264_encoder_reconfig -> {rc}");
+            }
+        }
+        Ok(())
+    }
+
     pub fn request_idr(&mut self) {
         self.force_idr = true;
     }
@@ -265,6 +287,8 @@ mod tests {
             bitrate_kbps: 2_000,
             chroma: Chroma::Yuv420,
             hdr: false,
+            audio: false,
+            audio_bitrate_kbps: None,
         }
     }
 

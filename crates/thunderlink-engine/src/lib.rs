@@ -241,6 +241,7 @@ fn ordered_candidate_addrs(peer: &tl_net::discovery::Peer) -> Vec<SocketAddr> {
 }
 
 mod audio;
+pub mod ladder;
 mod ctrl;
 
 #[cfg(target_os = "macos")]

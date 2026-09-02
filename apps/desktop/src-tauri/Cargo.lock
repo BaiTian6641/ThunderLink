@@ -431,6 +431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2502,6 +2511,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "opus"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33718946cc77d4032911d4efe03a66dbcbfbd2bb16c3da06aaeadcc637c32216"
+dependencies = [
+ "opusic-sys",
+]
+
+[[package]]
+name = "opusic-sys"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9d1ecdf206421bc74343ab3bb2f30ad2abbfee41fa341f7181fecbaf957769a"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3793,8 +3820,10 @@ dependencies = [
  "log",
  "parking_lot",
  "serde",
+ "tl-audio",
  "tl-linux-capture",
  "tl-linux-input",
+ "tl-macos-audio",
  "tl-macos-capture",
  "tl-macos-display",
  "tl-macos-input",
@@ -3861,6 +3890,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "tl-audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "opus",
+ "parking_lot",
+ "tl-proto",
+]
+
+[[package]]
 name = "tl-linux-capture"
 version = "0.1.0"
 dependencies = [
@@ -3880,6 +3920,17 @@ dependencies = [
  "anyhow",
  "libc",
  "log",
+ "tl-proto",
+]
+
+[[package]]
+name = "tl-macos-audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core-foundation",
+ "log",
+ "parking_lot",
  "tl-proto",
 ]
 

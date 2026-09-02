@@ -295,6 +295,23 @@ impl Encoder {
     }
 
     /// Force the next output frame to be an IDR.
+/// Change the average bitrate at runtime (adaptive ladder, SPEC §8).
+    /// Takes effect for subsequently encoded frames; the rate controller
+    /// re-converges without a session restart.
+    pub fn set_bitrate(&mut self, kbps: u32) -> Result<()> {
+        let value = CFNumber::new_i64(kbps as i64);
+        // SAFETY: session is live (created in new, invalidated in Drop);
+        // key/value are valid CF objects; VT retains the value.
+        unsafe {
+            set_prop(
+                self.session,
+                kVTCompressionPropertyKey_AverageBitRate,
+                CFRetained::as_ptr(&value).as_ptr() as *const CFType,
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn request_idr(&mut self) {
         self.force_idr.store(true, Ordering::SeqCst);
     }

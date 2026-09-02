@@ -301,6 +301,22 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   config constant — release mode uses frontendDist (embedded assets).
   Window verified 960x720; container freed after build.
 
+- Session bugs + codec negotiation + e2e fixes (2026-09-02, user
+  report from real Ubuntu 26.04 machine): (1) SESSION STUCK — the GUI
+  session slot only cleared on cancel.is_cancelled(), but error exits
+  never set the cancel token → "another session is in progress" forever.
+  Fix: role threads now ALWAYS cancel on exit (success or error), and
+  the slot cleaner logs the cleanup. (2) CODEC NEGOTIATION — Linux v1
+  errored with "H.264 only" when HEVC was the default → crash mid-
+  handshake → target saw "failed to fill whole buffer". Fix: graceful
+  fallback to H264 with a warning log (SPEC §8 fallback). (3) RESOLUTION
+  CLAMP — Linux now clamps to the target's decoder caps for the chosen
+  codec (even dimensions). (4) E2E VERIFIED: container Linux initiator
+  → Mac target over LAN (192.168.8.111): H264 1080p60, 300 frames,
+  clean teardown both sides, session ended properly. ffmpeg embedding
+  for HEVC researched (ffmpeg-next static build / ffmpeg-sidecar) —
+  deferred to next cycle (big change; H264 fallback works well).
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

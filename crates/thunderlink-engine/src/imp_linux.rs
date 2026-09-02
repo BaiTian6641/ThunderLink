@@ -46,11 +46,19 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     let stop = cancel.0.clone();
     let end_reason: EndReason = Arc::new(Mutex::new(None));
 
-    if codec == Some(tl_proto::Codec::Hevc) || codec == Some(tl_proto::Codec::Av1) {
-        // Linux v1 software path is H.264 only (SPEC §8 fallback codec).
-        anyhow::bail!("Linux v1 streams H.264 only (VAAPI HEVC is planned)");
-    }
-    let codec = tl_proto::Codec::H264;
+    // Linux v1: H.264 software encode only (x264). If HEVC was requested
+    // (the default), gracefully negotiate down instead of erroring — the
+    // target supports both (SPEC §8 fallback codec). HEVC arrives with
+    // the ffmpeg/VAAPI path.
+    let codec = match codec {
+        Some(tl_proto::Codec::H264) | None => tl_proto::Codec::H264,
+        _ => {
+            log::warn!(
+                "requested codec not available on Linux v1 (x264 only); negotiating H.264 fallback (SPEC §8)"
+            );
+            tl_proto::Codec::H264
+        }
+    };
 
     let mut sess = InitiatorSession::connect(addr, "thunderlink-initiator")?;
     let caps = sess.caps().clone();
@@ -58,8 +66,21 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         anyhow::bail!("system audio capture is macOS-only in v1 (PipeWire planned)");
     }
 
-    // Default: stream at the target panel's NATIVE resolution (SPEC §1).
-    let (width, height) = res.unwrap_or((caps.panel.width, caps.panel.height));
+    // Default: stream at the target panel's NATIVE resolution (SPEC §1),
+    // clamped to the target's decoder capability for the chosen codec.
+    let (mut width, mut height) = res.unwrap_or((caps.panel.width, caps.panel.height));
+    if let Some(d) = caps.decoders.iter().find(|d| d.codec == codec) {
+        if width > d.max_width || height > d.max_height {
+            let scale = (d.max_width as f64 / width as f64)
+                .min(d.max_height as f64 / height as f64)
+                .min(1.0);
+            width = (width as f64 * scale) as u32 & !1; // even dimensions
+            height = (height as f64 * scale) as u32 & !1;
+            log::warn!(
+                "target decoder caps {d:?}; clamped to {width}x{height}"
+            );
+        }
+    }
     let fps_milli = fps.map(|f| f * 1000).unwrap_or(caps.panel.refresh_millihertz);
     let bitrate = bitrate_kbps.unwrap_or_else(|| default_bitrate_kbps(width, height, codec));
     let stream_cfg = StreamConfig {

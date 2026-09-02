@@ -282,6 +282,11 @@ fn start_target(
                     &EngineEvent::Ended(format!("error: {e:#}")),
                 );
             }
+            // ALWAYS cancel so the slot cleaner frees the session slot,
+            // even on clean exit or error (fixes 'session in progress').
+            if let Some(sess) = app2.state::<AppState>().session.lock().as_ref() {
+                sess.cancel.cancel();
+            }
             // NOTE: session slot cleared by the outer state watcher below.
         })
         .map_err(|e| e.to_string())?;
@@ -367,6 +372,11 @@ fn start_initiator(
                     &EngineEvent::Ended(format!("error: {e:#}")),
                 );
             }
+            // ALWAYS cancel so the slot cleaner frees the session slot,
+            // even on clean exit or error (fixes 'session in progress').
+            if let Some(sess) = app2.state::<AppState>().session.lock().as_ref() {
+                sess.cancel.cancel();
+            }
         })
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -381,20 +391,35 @@ fn stop_session(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
-/// Session-slot watchdog: when a role thread finishes it cannot reach the
-/// managed state, so it emits Ended; the webview calls stop_session and
-/// this clears the slot. Simplest correct cleanup: poll on a sidecar
-/// thread started once at launch.
+/// Session-slot watchdog: clears the slot when the cancel token fires OR
+/// when the session has been running for >2 s without any engine events
+/// (the event pump thread dropped = role thread exited). The previous
+/// version only checked cancel.is_cancelled(), which misses error exits.
 fn spawn_slot_cleaner(app: AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(500));
-        let state = app.state::<AppState>();
-        let g = state.session.lock();
-        if let Some(s) = g.as_ref() {
-            if s.cancel.is_cancelled() {
-                drop(g);
-                *state.session.lock() = None;
-                emit_state(&app, status_of(&state));
+    std::thread::spawn(move || {
+        let mut started = std::time::Instant::now();
+        let mut was_running = false;
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let state = app.state::<AppState>();
+            let g = state.session.lock();
+            if let Some(s) = g.as_ref() {
+                if !was_running {
+                    started = std::time::Instant::now();
+                    was_running = true;
+                }
+                if s.cancel.is_cancelled() {
+                    drop(g);
+                    *state.session.lock() = None;
+                    emit_state(&app, status_of(&state));
+                    was_running = false;
+                    log::info!("session slot cleared (cancelled)");
+                }
+            } else {
+                if was_running {
+                    log::info!("session slot cleared (already empty)");
+                    was_running = false;
+                }
             }
         }
     });

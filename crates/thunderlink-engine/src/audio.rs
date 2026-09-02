@@ -68,7 +68,9 @@ pub(crate) fn spawn_audio_feeder(
 
 /// Run the target audio playback loop until `stop`: UDP → jitter buffer →
 /// opus decode → `write` callback (interleaved stereo f32). Emits ~1 Hz
-/// AudioStats on `ev` (SPEC §12.5).
+/// AudioStats on `ev` (SPEC §12.5). macOS only today (the Linux target
+/// role has no presenter/output yet).
+#[cfg(target_os = "macos")]
 pub(crate) fn run_audio_sink(
     bind: SocketAddr,
     stop: &std::sync::Arc<AtomicBool>,

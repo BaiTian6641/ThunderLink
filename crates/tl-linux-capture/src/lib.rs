@@ -1,11 +1,11 @@
-//! Linux screen capture (X11 root window / Wayland portal ScreenCast)
-//! + x264 software encode for the Linux initiator (docs/LINUX-PORT.md;
-//! SPEC §5/§9/§10). Mirrors the macOS capture crate's contract with
-//! plain BGRA buffers instead of CVPixelBuffer.
+//! Linux screen capture: X11 root window and Wayland portal ScreenCast,
+//! plus x264 software encode — the Linux initiator's source/codec stack
+//! per docs/LINUX-PORT.md and SPEC §5/§9/§10. Mirrors the macOS capture
+//! crate's contract with plain BGRA buffers instead of CVPixelBuffer.
 //!
-//! The crate is Linux-only: every item is behind `cfg(target_os =
-//! "linux")`, leaving an empty crate on other targets so the
-//! cross-platform workspace stays green.
+//! The crate is Linux-only: every item is behind
+//! `cfg(target_os = "linux")`, leaving an empty crate on other targets
+//! so the cross-platform workspace stays green.
 
 #[cfg(target_os = "linux")]
 pub mod capture;

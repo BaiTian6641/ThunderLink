@@ -903,6 +903,23 @@ dependencies = [
  "env_logger",
  "log",
  "parking_lot",
+ "thunderlink-engine",
+ "tl-macos-capture",
+ "tl-macos-display",
+ "tl-macos-input",
+ "tl-macos-render",
+ "tl-net",
+ "tl-proto",
+ "tl-session",
+]
+
+[[package]]
+name = "thunderlink-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "parking_lot",
  "tl-macos-capture",
  "tl-macos-display",
  "tl-macos-input",

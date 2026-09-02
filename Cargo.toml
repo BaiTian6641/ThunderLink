@@ -16,6 +16,7 @@ tl-macos-capture = { path = "crates/tl-macos-capture" }
 tl-macos-render = { path = "crates/tl-macos-render" }
 tl-macos-input = { path = "crates/tl-macos-input" }
 tl-macos-display = { path = "crates/tl-macos-display" }
+thunderlink-engine = { path = "crates/thunderlink-engine" }
 
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"

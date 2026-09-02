@@ -126,6 +126,7 @@ fn main() -> Result<()> {
                     no_input,
                     cancel: CancelToken::new(),
                 },
+                None,
                 &EventSink::discarded(),
             );
             drop(announcer);

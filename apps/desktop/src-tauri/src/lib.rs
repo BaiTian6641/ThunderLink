@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use thunderlink_engine::{
     announce_target, browse_targets, discover_target, run_initiator, run_target, CancelToken,
-    EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig,
+    EmbeddedPresenter, EngineEvent, EventSink, InitiatorConfig, Source, TargetConfig,
 };
 use tl_proto::CONTROL_PORT;
 
@@ -176,6 +176,18 @@ fn start_target(
     if state.session.lock().is_some() {
         return Err("a session is already running".into());
     }
+    // Sync Tauri commands run on the app MAIN thread — exactly what the
+    // AppKit presenter requires. Engine workers drive it via handles.
+    let presenter = {
+        let app2 = app.clone();
+        EmbeddedPresenter::new(
+            windowed,
+            std::sync::Arc::new(move |f: Box<dyn FnOnce() + Send>| {
+                let _ = app2.run_on_main_thread(f);
+            }),
+        )
+        .map_err(|e| format!("create presenter: {e:#}"))?
+    };
     let cancel = CancelToken::new();
     *state.session.lock() = Some(Session { role: "target", cancel: cancel.clone() });
     emit_state(&app, status_of(&state));
@@ -203,6 +215,7 @@ fn start_target(
                     no_input,
                     cancel,
                 },
+                Some(presenter),
                 &sink,
             );
             drop(announcer);

@@ -466,12 +466,33 @@ pub struct Presenter {
     close_requested: Arc<AtomicBool>,
     size: Arc<AtomicU64>,
     mode: Mode,
+    /// Live display-link render runtime (between `start_render` and
+    /// `stop_render`).
+    runtime: Mutex<Option<RenderRuntime>>,
+    /// Window delegate between `show` and `hide` (main-thread object;
+    /// only touched from MAIN THREAD ONLY methods).
+    delegate: Mutex<Option<Retained<WindowDelegate>>>,
 }
 
-// SAFETY: the only methods callable through a shared reference (`submit`,
-// `submit_handle`, `request_close`, `content_size`) touch exclusively the
-// Mutex/atomic fields. All AppKit/QuartzCore objects are only used from
-// `new`/`run`, which are main-thread-guarded via MainThreadMarker.
+/// Owned display-link + render-context pair while rendering is active.
+struct RenderRuntime {
+    ctx: Arc<RenderCtx>,
+    /// The Arc reference leaked into the CVDisplayLink callback context;
+    /// reclaimed in `stop_render`.
+    ctx_ptr: *const RenderCtx,
+    link: CVDisplayLinkRef,
+}
+
+// SAFETY: CVDisplayLink* are thread-safe C objects; ctx_ptr is the leaked
+// Arc reference whose lifetime is managed explicitly alongside.
+unsafe impl Send for RenderRuntime {}
+
+// SAFETY: methods callable through a shared reference (`submit`,
+// `submit_handle`, `request_close`, `content_size`, `poll_events`,
+// `start_render`, `stop_render`) touch exclusively the Mutex/atomic
+// fields and thread-safe C APIs. AppKit objects are only used from the
+// MAIN THREAD ONLY methods (`new`, `show`, `hide`, `run`), guarded by
+// MainThreadMarker or documented contract.
 unsafe impl Send for Presenter {}
 // SAFETY: see Send; shared references never reach AppKit state.
 unsafe impl Sync for Presenter {}
@@ -569,6 +590,8 @@ impl Presenter {
             close_requested: Arc::new(AtomicBool::new(false)),
             size: Arc::new(AtomicU64::new(pack_size(w, h))),
             mode,
+            runtime: Mutex::new(None),
+            delegate: Mutex::new(None),
         })
     }
 
@@ -599,13 +622,12 @@ impl Presenter {
         ((packed >> 32) as u32, packed as u32)
     }
 
-    /// MAIN THREAD ONLY. Presents the newest submitted frame per vsync
-    /// (CVDisplayLink); returns when the window closes after delivering
-    /// `CloseRequested`.
-    pub fn run(self, mut on_event: impl FnMut(PresentEvent) + 'static) -> Result<()> {
-        let mtm = MainThreadMarker::new().context("Presenter::run must run on the main thread")?;
-        let _ = self.mode;
-
+    /// MAIN THREAD ONLY. Install the window delegate and show the window.
+    /// Embedded hosts (whose runloop pumps AppKit events) call this when
+    /// the session starts instead of `run`.
+    pub fn show(&self) -> Result<()> {
+        let mtm =
+            MainThreadMarker::new().context("Presenter::show must run on the main thread")?;
         let delegate = WindowDelegate::new(
             mtm,
             DelegateIvars {
@@ -616,15 +638,35 @@ impl Presenter {
             },
         );
         self.window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        *self.delegate.lock() = Some(delegate);
         self.window.makeKeyAndOrderFront(None);
-
         let app = NSApplication::sharedApplication(mtm);
+        app.activate();
+        Ok(())
+    }
+
+    /// MAIN THREAD ONLY. Hide the window and clear the delegate.
+    pub fn hide(&self) {
+        self.window.orderOut(None);
+        self.window.setDelegate(None);
+        *self.delegate.lock() = None;
+    }
+
+    /// Any thread (CVDisplayLink is thread-safe). Drain queued
+    /// `PresentEvent`s — embedded hosts poll this instead of `run`'s
+    /// event callback.
+    pub fn poll_events(&self) -> Vec<PresentEvent> {
+        self.events.lock().drain(..).collect()
+    }
+
+    /// Any thread. Build the render context + display link (not started).
+    fn build_runtime(&self) -> Result<RenderRuntime> {
         // clippy: the objc2 Retained members are !Send by default, but the
         // render state is only ever USED on the CVDisplayLink callback's
         // single dedicated thread (CAMetalLayer drawables and MTLCommandQueue
         // are documented thread-safe; the main-thread-only NSView is never
-        // touched there). run() only touches the `stopping` atomic. The
-        // Mutex exists to order teardown reclamation, not data races.
+        // touched there). The Mutex exists to order teardown reclamation,
+        // not data races.
         #[allow(clippy::arc_with_non_send_sync)]
         let ctx = Arc::new(RenderCtx {
             stopping: AtomicBool::new(false),
@@ -643,7 +685,7 @@ impl Presenter {
             }),
         });
         // Leak one reference into the display-link callback context; it is
-        // restored below at teardown.
+        // reclaimed in `stop_render`.
         let ctx_ptr = Arc::into_raw(ctx.clone());
 
         let mut link: CVDisplayLinkRef = ptr::null_mut();
@@ -656,18 +698,71 @@ impl Presenter {
         }
         // SAFETY: link is live; the callback keeps its own Arc clone alive
         // for every invocation (see display_link_callback).
-        unsafe { CVDisplayLinkSetOutputCallback(link, display_link_callback, ctx_ptr.cast_mut().cast()) };
+        unsafe {
+            CVDisplayLinkSetOutputCallback(
+                link,
+                display_link_callback,
+                ctx_ptr.cast_mut().cast(),
+            )
+        };
+        Ok(RenderRuntime { ctx, ctx_ptr, link })
+    }
+
+    /// Any thread. Start the vsync render loop. Idempotent per show/hide
+    /// cycle: a second call while running returns Ok.
+    pub fn start_render(&self) -> Result<()> {
+        if self.runtime.lock().is_some() {
+            return Ok(());
+        }
+        let rt = self.build_runtime()?;
         // SAFETY: link is live and has a callback.
-        let status = unsafe { CVDisplayLinkStart(link) };
+        let status = unsafe { CVDisplayLinkStart(rt.link) };
         if status != kCVReturnSuccess {
-            // SAFETY: reclaim the leaked reference on this error path.
-            drop(unsafe { Arc::from_raw(ctx_ptr) });
-            // SAFETY: link was created successfully above.
-            unsafe { CVDisplayLinkStop(link) };
-            unsafe { CFRelease(link.cast()) };
+            // SAFETY: link was created successfully above; stop + release
+            // it and reclaim the leaked ctx reference.
+            unsafe {
+                CVDisplayLinkStop(rt.link);
+                CFRelease(rt.link.cast());
+            }
+            drop(unsafe { Arc::from_raw(rt.ctx_ptr) });
             bail!("CVDisplayLinkStart failed: {status}");
         }
         log::info!("present: display link started ({:?})", self.mode);
+        *self.runtime.lock() = Some(rt);
+        Ok(())
+    }
+
+    /// Any thread. Stop the render loop and release its resources. Halts
+    /// new renders first; an in-flight callback keeps its own Arc clone,
+    /// so the context is reclaimed only after it finishes (no reliance on
+    /// undocumented CVDisplayLinkStop semantics).
+    pub fn stop_render(&self) {
+        let Some(rt) = self.runtime.lock().take() else {
+            return;
+        };
+        rt.ctx.stopping.store(true, Ordering::Release);
+        // SAFETY: link is live and stopped exactly once.
+        unsafe {
+            CVDisplayLinkStop(rt.link);
+            CFRelease(rt.link.cast());
+        }
+        drop(rt.ctx);
+        // SAFETY: reclaim the reference leaked into the callback context;
+        // with the handle dropped above, this is the final one unless a
+        // callback is still mid-invocation (which then frees it on return).
+        drop(unsafe { Arc::from_raw(rt.ctx_ptr) });
+        log::info!("present: display link stopped");
+    }
+
+    /// MAIN THREAD ONLY. Owns the AppKit event loop: presents the newest
+    /// submitted frame per vsync until the window closes, then delivers
+    /// `CloseRequested` and returns. CLI/embedded-CLI hosts use this;
+    /// GUI hosts with their own runloop use show/start_render/poll_events.
+    pub fn run(&self, mut on_event: impl FnMut(PresentEvent) + 'static) -> Result<()> {
+        let mtm = MainThreadMarker::new().context("Presenter::run must run on the main thread")?;
+        let app = NSApplication::sharedApplication(mtm);
+        self.show()?;
+        self.start_render()?;
 
         // Event loop on the main thread until the window closes.
         let mut closed = false;
@@ -698,8 +793,7 @@ impl Presenter {
                 self.window.close();
             }
 
-            let drained: Vec<PresentEvent> = self.events.lock().drain(..).collect();
-            for event in drained {
+            for event in self.poll_events() {
                 if matches!(event, PresentEvent::CloseRequested) {
                     closed = true;
                 }
@@ -707,32 +801,17 @@ impl Presenter {
             }
         }
 
-        // Halt new renders, stop the link, then drop our references. Any
-        // callback already past the stopping check holds its own Arc clone,
-        // so the render context is reclaimed only after it finishes — no
-        // use-after-free, no reliance on undocumented Stop semantics.
-        ctx.stopping.store(true, Ordering::Release);
-        // SAFETY: link is live and stopped exactly once.
-        unsafe {
-            CVDisplayLinkStop(link);
-            CFRelease(link.cast());
-        }
-        drop(ctx);
-        // SAFETY: reclaim the reference leaked into the callback context;
-        // with run()'s handle dropped above, this is the final one unless a
-        // callback is still mid-invocation (which then frees it on return).
-        drop(unsafe { Arc::from_raw(ctx_ptr) });
-        self.window.setDelegate(None);
-        self.window.orderOut(None);
+        self.stop_render();
+        self.hide();
         Ok(())
     }
 }
 
 impl Drop for Presenter {
     fn drop(&mut self) {
-        // SAFETY: tex_cache was created in new() and is released exactly once
-        // here; the display link (which borrowed it) is stopped before run()
-        // returns, so no user remains.
+        // SAFETY: tex_cache was created in new() and is released exactly
+        // once here; the display link (which borrowed it) is stopped by
+        // stop_render()/run() before Drop, so no user remains.
         unsafe { CFRelease(self.tex_cache) };
     }
 }

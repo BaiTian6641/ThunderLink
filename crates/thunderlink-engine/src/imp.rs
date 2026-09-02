@@ -17,7 +17,7 @@ use tl_macos_display::virt::{VirtualDisplay, VirtualDisplayConfig};
 use tl_macos_input::inject::{Injector, Mapping};
 use tl_macos_input::tap::{EventTap, Rect};
 use tl_macos_render::decode::{decoder_caps, Decoder};
-use tl_macos_render::present::{Mode, PresentEvent, Presenter};
+use tl_macos_render::present::{Mode, PresentEvent};
 use tl_net::feedback::FeedbackChannel;
 use tl_net::input_chan::{InputRx, InputTx};
 use tl_net::video::{VideoRx, VideoTx, VideoTxConfig};
@@ -28,6 +28,50 @@ use tl_proto::{
 use tl_session::{InitiatorSession, TargetSession};
 
 use super::{EventSink, InitiatorConfig, Source, TargetConfig};
+
+use std::sync::Arc as StdArc;
+use tl_macos_render::present::Presenter;
+
+/// A presenter created on the embedder's AppKit MAIN thread (e.g. a sync
+/// Tauri command) and driven by the engine through thread-safe handles.
+/// `on_main` schedules a closure onto that same main thread (window
+/// show/hide are AppKit main-thread operations; the engine worker cannot
+/// call them directly).
+pub struct EmbeddedPresenter {
+    presenter: StdArc<Presenter>,
+    on_main: StdArc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>,
+}
+
+impl EmbeddedPresenter {
+    /// MUST be called on the AppKit main thread.
+    pub fn new(
+        windowed: bool,
+        on_main: StdArc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>,
+    ) -> Result<Self> {
+        let mode = if windowed {
+            tl_macos_render::present::Mode::Windowed
+        } else {
+            tl_macos_render::present::Mode::Fullscreen
+        };
+        Ok(Self { presenter: StdArc::new(Presenter::new(mode)?), on_main })
+    }
+}
+
+impl EmbeddedPresenter {
+    fn show_on_main(&self) {
+        let p = self.presenter.clone();
+        (self.on_main)(Box::new(move || {
+            if let Err(e) = p.show() {
+                log::error!("presenter show failed: {e:#}");
+            }
+        }));
+    }
+
+    fn hide_on_main(&self) {
+        let p = self.presenter.clone();
+        (self.on_main)(Box::new(move || p.hide()));
+    }
+}
 
 const CONTROL_PORT: u16 = tl_proto::CONTROL_PORT;
 
@@ -50,7 +94,11 @@ fn set_reason(slot: &Arc<Mutex<Option<String>>>, reason: impl Into<String>) {
 
 // ------------------------------ target ------------------------------
 
-pub fn run_target(cfg: TargetConfig, ev: &EventSink) -> Result<()> {
+pub fn run_target(
+    cfg: TargetConfig,
+    presenter: Option<EmbeddedPresenter>,
+    ev: &EventSink,
+) -> Result<()> {
     let TargetConfig { bind, windowed, no_input, cancel } = cfg;
     let stop = cancel.0.clone();
     let end_reason = reason_slot();
@@ -117,11 +165,32 @@ pub fn run_target(cfg: TargetConfig, ev: &EventSink) -> Result<()> {
     )?;
     let mut decoder = Decoder::new()?;
 
-    let mode = if windowed { Mode::Windowed } else { Mode::Fullscreen };
-    let presenter = Presenter::new(mode)?; // main thread (AppKit)
-    let submit = presenter.submit_handle();
-    let closer_decode = submit.clone();
-    let closer_control = submit.clone();
+    // Presenter: either created by the embedder on ITS main thread
+    // (EmbeddedPresenter; engine drives thread-safe handles) or created
+    // here on the caller's thread — which the CLI guarantees is the
+    // process main thread (AppKit contract, SPEC §9).
+    let presenter_embedded = presenter;
+    let submit;
+    let closer_decode;
+    let closer_control;
+    let presenter_owned: Option<Presenter> = match presenter_embedded {
+        Some(ref ep) => {
+            let s = ep.presenter.submit_handle();
+            submit = s.clone();
+            closer_decode = s.clone();
+            closer_control = s;
+            None
+        }
+        None => {
+            let mode = if windowed { Mode::Windowed } else { Mode::Fullscreen };
+            let p = Presenter::new(mode)?; // caller is main thread (CLI)
+            let s = p.submit_handle();
+            submit = s.clone();
+            closer_decode = s.clone();
+            closer_control = s;
+            Some(p)
+        }
+    };
 
     let counters = Arc::new(tl_video::Counters::default());
 
@@ -263,13 +332,43 @@ pub fn run_target(cfg: TargetConfig, ev: &EventSink) -> Result<()> {
         }
     }
 
-    // Main thread: present until the window closes or the session stops.
-    let stop_flag = stop.clone();
-    presenter.run(move |ev| {
-        if ev == PresentEvent::CloseRequested {
-            stop_flag.store(true, Ordering::SeqCst);
+    // Present until the window closes or the session stops.
+    match (presenter_owned, presenter_embedded) {
+        (Some(p), _) => {
+            // CLI path: the caller's thread IS the AppKit main thread; run()
+            // owns the event loop until close.
+            let stop_flag = stop.clone();
+            p.run(move |ev| {
+                if ev == PresentEvent::CloseRequested {
+                    stop_flag.store(true, Ordering::SeqCst);
+                }
+            })?;
         }
-    })?;
+        (None, Some(ep)) => {
+            // Embedded path: the embedder's runloop pumps AppKit events;
+            // show/hide on its main thread, render loop from here.
+            ep.show_on_main();
+            ep.presenter.start_render()?;
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let closed = ep
+                    .presenter
+                    .poll_events()
+                    .iter()
+                    .any(|e| matches!(e, PresentEvent::CloseRequested));
+                if closed {
+                    stop.store(true, Ordering::SeqCst);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            ep.presenter.stop_render();
+            ep.hide_on_main();
+        }
+        (None, None) => unreachable!("one presenter path is always taken"),
+    }
     stop.store(true, Ordering::SeqCst);
     // Let worker threads observe the stop flag before process exit.
     std::thread::sleep(Duration::from_millis(200));

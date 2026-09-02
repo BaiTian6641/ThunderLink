@@ -218,7 +218,7 @@ fn ordered_candidate_addrs(peer: &tl_net::discovery::Peer) -> Vec<SocketAddr> {
 #[cfg(target_os = "macos")]
 mod imp;
 #[cfg(target_os = "macos")]
-pub use imp::{run_initiator, run_target};
+pub use imp::{run_initiator, run_target, EmbeddedPresenter};
 
 /// Run the target role (blocks until the session ends).
 #[cfg(not(target_os = "macos"))]

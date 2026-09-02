@@ -275,6 +275,23 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   final AppImage (static-pie exec limitation on M1) — content verified,
   real hardware should work. Containers freed after build.
 
+- Third x86_64 AppImage fix (2026-09-02, user report from Ubuntu 26.04):
+  three issues diagnosed via web research: (1) GLIBC_PRIVATE undefined
+  symbol — we were bundling libc.so.6/libm.so.6 from Ubuntu 24.04,
+  but the host (26.04) has newer glibc; host system libs loaded via
+  dlopen found our OLDER bundled libc and failed on private symbols.
+  Fix: EXCLUDE all glibc libs from the bundle (libc, libm, libpthread,
+  librt, libdl, ld-linux, libresolv, etc.) — the host always provides
+  them. (2) GIO module load failure (libgcfsbus.so) — our bundled GLib
+  was loading GIO modules from the HOST path which are compiled against
+  a different GLib. Fix: GIO_MODULE_DIR="" in AppRun + bundle the build
+  system's GIO modules. (3) Blank screen — WebKitGTK hardware
+  compositing (DMA-BUF) fails without GPU/in AppImages. Fix:
+  WEBKIT_DISABLE_COMPOSITING_MODE=1 + WEBKIT_DISABLE_DMABUF_RENDERER=1
+  + GDK_BACKEND=x11 fallback in AppRun. All three fixes in
+  scripts/apprun-fixed.sh. Window verified in container (960x720).
+  User note: keep single VM at a time to avoid macOS swap.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

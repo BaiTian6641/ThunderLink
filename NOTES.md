@@ -292,6 +292,15 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   scripts/apprun-fixed.sh. Window verified in container (960x720).
   User note: keep single VM at a time to avoid macOS swap.
 
+- Fourth x86_64 AppImage fix (2026-09-02, 'Could not connect to
+  localhost'): the previous build used raw cargo build --release which
+  did NOT embed the frontend — the app fell back to devUrl
+  (localhost:5173). Fix: use npx tauri build --no-bundle which runs the
+  full Tauri build pipeline (frontend embedding via generate_context!).
+  The localhost:5173 string appearing ONCE in the binary is just the
+  config constant — release mode uses frontendDist (embedded assets).
+  Window verified 960x720; container freed after build.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

@@ -1,5 +1,10 @@
 # Rust build output (root and per-crate target dirs)
 target/
+target-local/
+
+# crash dumps
+core
+core.*
 
 # Local scratch
 *.swp

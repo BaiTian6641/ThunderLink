@@ -3,7 +3,7 @@
 For the next agent/operator. Read PLAN.md (strategy/milestones), SPEC.md
 (wire protocol + crate contracts), NOTES.md (decision/risk log) first; this
 file is the operational state dump: what exists, what is verified, how to
-prove it, and what to do next. Last updated 2026-09-02 (post-ladder+Wayland+GUI-audio).
+prove it, and what to do next. Last updated 2026-09-02 (post-universal-linux: both-arch AppImages).
 
 ## 1. Where we are
 

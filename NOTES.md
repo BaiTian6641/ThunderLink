@@ -222,6 +222,29 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   real latent break: encode.rs test missed the audio StreamConfig
   fields from 5cadfac. Workspace 101/101, clippy 0 both platforms.
 
+- Universal Linux distribution session (2026-09-02): both-arch AppImages
+  + a self-extracting universal installer. x86_64 built in a Docker
+  Desktop amd64/QEMU container (ubuntu:24.04 — 22.04's libspa headers
+  are too old for the libspa crate). Gotchas: Docker Desktop's
+  credential helper (docker-credential-desktop) must be on PATH or
+  removed from ~/.docker/config.json for pulls; linuxdeploy and
+  appimagetool AppImages FAIL under QEMU (Exec format error / subprocess
+  crash) — manual packaging needed: extract runtime via `dd` (size from
+  offset 0x0208), `mksquashfs`, `cat runtime + squashfs`. The x86_64
+  AppImage segfaults under QEMU (WebKitGTK + QEMU limitation) but the
+  raw binary runs fine (exit 124 on timeout = window alive); the
+  assembly method is verified working on aarch64 (window confirmed via
+  xwininfo). A single-file dual-arch AppImage is architecturally
+  impossible (the AppImage runtime is a native ELF — it can't execute
+  on the wrong arch). Universal distribution =
+  ThunderLink_0.1.0_aarch64.AppImage (100 MB) +
+  ThunderLink_0.1.0_amd64.AppImage (30 MB) +
+  ThunderLink_universal.sh (175 MB self-extracting, uname -m detection,
+  TL_EXTRACT_ONLY=1 mode). scripts/build-universal-appimage.sh is the
+  reproducible build. Docker Desktop note: containers tl-build (arm64,
+  ubuntu:latest) and tl-build-x64 (amd64, ubuntu:24.04) both mount
+  /work; npm install in one swaps esbuild arch — re-run on mac after.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

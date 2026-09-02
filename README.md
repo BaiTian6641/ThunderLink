@@ -90,11 +90,17 @@ x86_64 builds the same way in an amd64 container). From the Mac repo:
 scripts/build-linux-appimage.sh    # colima/docker Ubuntu 22.04 container build
 ```
 
-Artifacts in `apps/desktop/src-tauri/target/release/bundle/`:
-`ThunderLink_0.1.0_aarch64.AppImage` (self-contained — WebKitGTK and all
-libs bundled; needs glibc 2.35+, i.e. Ubuntu 22.04+/Debian 12+), plus
-`.deb`/`.rpm` in the container's `/tmp/tl-target/.../bundle/`. On hosts
-without FUSE, run it with `--appimage-extract-and-run`.
+Artifacts in `apps/desktop/src-tauri/target/release/bundle/universal/`:
+- `ThunderLink_0.1.0_aarch64.AppImage` — native ARM64 (100 MB)
+- `ThunderLink_0.1.0_amd64.AppImage` — native x86_64 (30 MB)
+- `ThunderLink_universal.sh` — self-extracting universal installer (175 MB,
+  detects `uname -m`, extracts the right AppImage, runs it; `TL_EXTRACT_ONLY=1`
+  to extract without running)
+
+Each AppImage is self-contained (WebKitGTK + all libs bundled). On hosts
+without FUSE, run with `--appimage-extract-and-run`. Build both with
+`scripts/build-universal-appimage.sh` (uses the tl-build arm64 container +
+creates tl-build-x64 if needed).
 
 Linux specifics:
 - The initiator is the supported role: test-pattern source (no

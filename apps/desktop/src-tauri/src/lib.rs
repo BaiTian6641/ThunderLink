@@ -349,6 +349,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_permissions,
+            open_permission_pane,
             list_targets,
             start_target,
             start_initiator,
@@ -356,4 +357,22 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Open the relevant Privacy & Security pane in System Settings.
+#[tauri::command]
+fn open_permission_pane(kind: String) -> Result<(), String> {
+    let pane = match kind.as_str() {
+        "screen" => "Privacy_ScreenCapture",
+        "accessibility" => "Privacy_Accessibility",
+        "input" => "Privacy_ListenEvent",
+        _ => return Err(format!("unknown permission pane: {kind}")),
+    };
+    std::process::Command::new("open")
+        .arg(format!(
+            "x-apple.systempreferences:com.apple.preference.security?{pane}"
+        ))
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

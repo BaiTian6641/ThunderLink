@@ -120,6 +120,8 @@ export function createMockApi() {
       case "get_status":
         return { running: running.on, role: running.role };
 
+      case "open_permission_pane":
+        return null;
       case "get_permissions":
         return { ...MOCK_PERMISSIONS };
 

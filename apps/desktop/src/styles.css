@@ -567,6 +567,17 @@ bx-structured-list {
   max-width: none;
 }
 
+/* ---- Permissions --------------------------------------------------- */
+.tl-perm-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cds-spacing-03);
+}
+.tl-perm-note-inline {
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+}
+
 /* ---- Activity log --------------------------------------------------- */
 .tl-log-panel {
   margin-top: var(--cds-spacing-05);

@@ -22,7 +22,12 @@ full macOS implementation of both roles, point-to-point, no crypto.
   (role TXT) for its lifetime; initiator `--discover [--discover-timeout N]`
   browses and probes candidate addrs (IPv4 → global v6 → rest). The control
   listener survives stray connections/probes (accept retried ≤16 failures).
-- **Desktop GUI app** (`apps/desktop`, Tauri v2 + IBM Carbon web components,
+- **Desktop GUI app — INSTALLABLE** (`scripts/install-app.sh` builds the
+  DMG and installs to /Applications; DMG also at
+  apps/desktop/src-tauri/target/release/bundle/dmg/). Ad-hoc signed:
+  runs where built; other Macs need one right-click→Open until
+  notarized. First-run permission panel has per-row Open Settings deep
+  links. (`apps/desktop`, Tauri v2 + IBM Carbon web components,
   dark g100): role picker, both role views with live stats + activity log,
   permission banners reading real TCC state, mDNS target scanning,
   direct-address input, virtual-display/source/codec controls. Verified

@@ -154,13 +154,26 @@ function homeHTML() {
       <bx-tile class="tl-perms-tile">
         <div class="tl-perm-row">
           <span>Screen Recording</span>
-          <span id="perm-sr"></span>
+          <span class="tl-perm-actions">
+            <span id="perm-sr"></span>
+            <bx-btn kind="ghost" size="sm" data-perm="screen">Open Settings</bx-btn>
+          </span>
         </div>
         <div class="tl-perm-row">
           <span>Accessibility</span>
-          <span id="perm-ax"></span>
+          <span class="tl-perm-actions">
+            <span id="perm-ax"></span>
+            <bx-btn kind="ghost" size="sm" data-perm="accessibility">Open Settings</bx-btn>
+          </span>
         </div>
-        <p class="tl-perm-note">Permissions are granted in System Settings &gt; Privacy &amp; Security. Only screen capture and input forwarding need them.</p>
+        <div class="tl-perm-row">
+          <span>Input Monitoring</span>
+          <span class="tl-perm-actions">
+            <span class="tl-perm-note-inline">only needed to forward this Mac's input</span>
+            <bx-btn kind="ghost" size="sm" data-perm="input">Open Settings</bx-btn>
+          </span>
+        </div>
+        <p class="tl-perm-note">After toggling a permission you may need to restart ThunderLink for it to take effect.</p>
       </bx-tile>
     </section>
   </section>`;
@@ -759,6 +772,12 @@ const actions = {
 };
 
 app.addEventListener("click", (ev) => {
+  const permBtn = ev.target.closest?.("[data-perm]");
+  if (permBtn) {
+    ev.preventDefault();
+    api.invoke("open_permission_pane", { kind: permBtn.dataset.perm });
+    return;
+  }
   const el = ev.target.closest?.("[data-action]");
   if (!el) return;
   const fn = actions[el.dataset.action];

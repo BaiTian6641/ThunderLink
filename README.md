@@ -46,7 +46,39 @@ cargo clippy --workspace --all-targets     # 0 warnings expected
 cargo test --workspace                     # 66+ tests, headless, no permissions needed
 ```
 
-## Usage
+## Desktop app (easiest)
+
+Build and install the GUI app (Carbon design, both roles, live stats,
+permission guidance) in one step:
+
+```sh
+scripts/install-app.sh        # builds the DMG, installs to /Applications, launches
+```
+
+Or grab the installer directly:
+`apps/desktop/src-tauri/target/release/bundle/dmg/ThunderLink_*.dmg` —
+open it and drag ThunderLink to Applications.
+
+**First run**: the app shows a Permissions panel. Grant as needed and use
+the per-row "Open Settings" buttons to jump straight to the right System
+Settings pane:
+
+- *Screen Recording* — only for streaming your screen (the test pattern
+  and acting as a display need nothing).
+- *Accessibility* — for controlling the initiator with the target's
+  keyboard/mouse.
+- *Input Monitoring* — for forwarding the target's keyboard/mouse.
+
+ After toggling a permission, restart the app if the status pill doesn't
+ update.
+
+The app is ad-hoc signed (no paid Apple developer account yet): it runs
+directly on the machine where it was built. On another Mac, right-click →
+Open once to pass Gatekeeper, or run
+`xattr -dr com.apple.quarantine /Applications/ThunderLink.app`.
+Notarization is planned once a signing certificate is procured.
+
+## Usage (CLI)
 
 Act as a monitor (target machine):
 

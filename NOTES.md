@@ -138,6 +138,21 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   creation legal); first mDNS resolve may need the probe-retry loop
   (already in).
 
+- Distribution session (2026-09-02): app made directly runnable.
+  `scripts/install-app.sh` builds the DMG (4.0 MB, ad-hoc signed — no
+  Apple developer cert on this machine), mounts it, installs to
+  /Applications, launches. Verified from /Applications: window renders,
+  new Permissions panel has per-row "Open Settings" buttons (macOS 26
+  still accepts the com.apple.preference.security deep links) that open
+  the right pane — AX-clicked live. TCC nuance: launching the binary
+  from a terminal attributes permissions to the TERMINAL; launching the
+  .app via Finder/open attributes to ThunderLink — banners reflect
+  whatever TCC says at runtime, which is the designed first-run flow.
+  Gatekeeper: runs directly where built; other Macs need one
+  right-click→Open (or xattr quarantine removal) until notarized.
+  tauri.conf gotchas: bundle JSON is strict (trailing-brace edits broke
+  it twice); keep targets ["app","dmg"].
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

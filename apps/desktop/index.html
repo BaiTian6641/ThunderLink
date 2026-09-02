@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>ThunderLink</title>
+    <!-- Paint the dark shell before the module graph loads (avoids a white flash). -->
+    <style>
+      html {
+        background: #161616;
+      }
+      body {
+        opacity: 0;
+        transition: opacity 0.15s ease-out;
+      }
+      body.tl-ready {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <bx-header aria-label="ThunderLink">
+      <bx-header-name prefix="">ThunderLink</bx-header-name>
+    </bx-header>
+    <main id="app" class="tl-app"></main>
+    <script type="module" src="/src/main.js"></script>
+    <noscript>ThunderLink requires JavaScript.</noscript>
+  </body>
+</html>

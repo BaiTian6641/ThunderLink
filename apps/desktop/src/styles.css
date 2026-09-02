@@ -1,0 +1,628 @@
+/*
+ * ThunderLink desktop frontend — Carbon g100 (dark) theme + app layout.
+ *
+ * carbon-web-components styles live in each component's shadow DOM and read
+ * Carbon v10 `--cds-*` CSS custom properties from the document; this sheet
+ * defines the full g100 token set (values from @carbon/themes g100, the
+ * @carbon/type v10 scale, @carbon/layout spacing) plus the app's own layout.
+ */
+
+:root {
+  /* ---- Colors: Carbon v10 g100 ------------------------------------ */
+  --cds-interactive-01: #0043ce;
+  --cds-interactive-02: #6f6f6f;
+  --cds-interactive-03: #ffffff;
+  --cds-interactive-04: #0f62fe;
+  --cds-ui-background: #161616;
+  --cds-ui-01: #262626;
+  --cds-ui-02: #393939;
+  --cds-ui-03: #393939;
+  --cds-ui-04: #525252;
+  --cds-ui-05: #f4f4f4;
+  --cds-text-01: #f4f4f4;
+  --cds-text-02: #c6c6c6;
+  --cds-text-03: #6f6f6f;
+  --cds-text-04: #ffffff;
+  --cds-text-05: #8d8d8d;
+  --cds-text-error: #ff8389;
+  --cds-icon-01: #f4f4f4;
+  --cds-icon-02: #c6c6c6;
+  --cds-icon-03: #ffffff;
+  --cds-link-01: #4589ff;
+  --cds-link-secondary: #78a9ff;
+  --cds-visited-link: #be95ff;
+  --cds-inverse-link: #0043ce;
+  --cds-field-01: #262626;
+  --cds-field-02: #393939;
+  --cds-inverse-01: #161616;
+  --cds-inverse-02: #f4f4f4;
+  --cds-support-01: #fa4d56;
+  --cds-support-02: #42be65;
+  --cds-support-03: #f1c21b;
+  --cds-support-04: #0f62fe;
+  --cds-inverse-support-01: #da1e28;
+  --cds-inverse-support-02: #24a148;
+  --cds-inverse-support-03: #f1c21b;
+  --cds-inverse-support-04: #0043ce;
+  --cds-overlay-01: rgba(0, 0, 0, 0.65);
+  --cds-danger-01: #da1e28;
+  --cds-danger-02: #fa4d56;
+  --cds-focus: #ffffff;
+  --cds-inverse-focus-ui: #0043ce;
+  --cds-hover-primary: #0353e9;
+  --cds-active-primary: #002d9c;
+  --cds-hover-primary-text: #78a9ff;
+  --cds-hover-secondary: #606060;
+  --cds-active-secondary: #393939;
+  --cds-hover-tertiary: #f4f4f4;
+  --cds-active-tertiary: #c6c6c6;
+  --cds-hover-ui: #353535;
+  --cds-hover-light-ui: #4c4c4c;
+  --cds-active-ui: #525252;
+  --cds-selected-ui: #393939;
+  --cds-inverse-hover-ui: #e5e5e5;
+  --cds-hover-danger: #ba1b23;
+  --cds-active-danger: #a2191f;
+  --cds-hover-row: #353535;
+  --cds-disabled-01: #262626;
+  --cds-disabled-02: #525252;
+  --cds-disabled-03: #8d8d8d;
+  --cds-highlight: #002d9c;
+  --cds-decorative-01: #525252;
+  --cds-button-separator: #161616;
+  --cds-skeleton-01: #353535;
+  --cds-skeleton-02: #525252;
+  --cds-shadow: rgba(0, 0, 0, 0.3);
+  --cds-background: #161616;
+  --cds-background-hover: #353535;
+  --cds-container-01: #262626;
+  --cds-container-02: #262626;
+  --cds-container-03: #393939;
+  --cds-container-04: #393939;
+  --cds-container-05: #525252;
+  --cds-field: #262626;
+  --cds-border-subtle: #393939;
+  --cds-border-strong: #525252;
+  --cds-border-interactive: #0f62fe;
+  --cds-text-primary: #f4f4f4;
+  --cds-text-secondary: #c6c6c6;
+  --cds-text-disabled: #525252;
+  --cds-text-on-color: #ffffff;
+  --cds-icon-primary: #f4f4f4;
+  --cds-icon-secondary: #c6c6c6;
+  --cds-notification-action-hover: #353535;
+  --cds-notification-background-error: #262626;
+  --cds-notification-background-info: #262626;
+  --cds-notification-background-success: #262626;
+  --cds-notification-background-warning: #262626;
+  /* Tag colors — g100 (XX-70 background / XX-20 text / XX-70-hover). */
+  --cds-tag-background-red: #a2191f;
+  --cds-tag-color-red: #ffd7d9;
+  --cds-tag-hover-red: #c21e25;
+  --cds-tag-background-magenta: #9f1853;
+  --cds-tag-color-magenta: #ffd6e8;
+  --cds-tag-hover-magenta: #bf1d63;
+  --cds-tag-background-purple: #6929c4;
+  --cds-tag-color-purple: #e8daff;
+  --cds-tag-hover-purple: #7c3dd6;
+  --cds-tag-background-blue: #0043ce;
+  --cds-tag-color-blue: #d0e2ff;
+  --cds-tag-hover-blue: #0053ff;
+  --cds-tag-background-cyan: #00539a;
+  --cds-tag-color-cyan: #bae6ff;
+  --cds-tag-hover-cyan: #0066bd;
+  --cds-tag-background-teal: #005d5d;
+  --cds-tag-color-teal: #9ef0f0;
+  --cds-tag-hover-teal: #007070;
+  --cds-tag-background-green: #0e6027;
+  --cds-tag-color-green: #a7f0ba;
+  --cds-tag-hover-green: #11742f;
+  --cds-tag-background-gray: #525252;
+  --cds-tag-color-gray: #e0e0e0;
+  --cds-tag-hover-gray: #636363;
+  --cds-tag-background-cool-gray: #4d5358;
+  --cds-tag-color-cool-gray: #dde1e6;
+  --cds-tag-hover-cool-gray: #5d646a;
+  --cds-tag-background-warm-gray: #565151;
+  --cds-tag-color-warm-gray: #e5e0df;
+  --cds-tag-hover-warm-gray: #696363;
+
+  /* ---- Type: Carbon v10 scale ------------------------------------- */
+  --cds-caption-01-font-size: 0.75rem;
+  --cds-caption-01-font-weight: 400;
+  --cds-caption-01-line-height: 1rem;
+  --cds-caption-01-letter-spacing: 0.32px;
+  --cds-label-01-font-size: 0.75rem;
+  --cds-label-01-font-weight: 400;
+  --cds-label-01-line-height: 1rem;
+  --cds-label-01-letter-spacing: 0.32px;
+  --cds-helper-text-01-font-size: 0.75rem;
+  --cds-helper-text-01-font-weight: 400;
+  --cds-helper-text-01-line-height: 1rem;
+  --cds-helper-text-01-letter-spacing: 0.32px;
+  --cds-body-short-01-font-size: 0.875rem;
+  --cds-body-short-01-font-weight: 400;
+  --cds-body-short-01-line-height: 1.125rem;
+  --cds-body-short-01-letter-spacing: 0.16px;
+  --cds-body-long-01-font-size: 0.875rem;
+  --cds-body-long-01-font-weight: 400;
+  --cds-body-long-01-line-height: 1.25rem;
+  --cds-body-long-01-letter-spacing: 0.16px;
+  --cds-body-short-02-font-size: 1rem;
+  --cds-body-short-02-font-weight: 400;
+  --cds-body-short-02-line-height: 1.375rem;
+  --cds-body-short-02-letter-spacing: 0;
+  --cds-body-long-02-font-size: 1rem;
+  --cds-body-long-02-font-weight: 400;
+  --cds-body-long-02-line-height: 1.5rem;
+  --cds-body-long-02-letter-spacing: 0;
+  --cds-productive-heading-01-font-size: 0.875rem;
+  --cds-productive-heading-01-font-weight: 600;
+  --cds-productive-heading-01-line-height: 1.125rem;
+  --cds-productive-heading-01-letter-spacing: 0.16px;
+  --cds-productive-heading-02-font-size: 1rem;
+  --cds-productive-heading-02-font-weight: 600;
+  --cds-productive-heading-02-line-height: 1.375rem;
+  --cds-productive-heading-02-letter-spacing: 0;
+  --cds-productive-heading-03-font-size: 1.25rem;
+  --cds-productive-heading-03-font-weight: 400;
+  --cds-productive-heading-03-line-height: 1.625rem;
+  --cds-productive-heading-03-letter-spacing: 0;
+  --cds-productive-heading-04-font-size: 1.75rem;
+  --cds-productive-heading-04-font-weight: 400;
+  --cds-productive-heading-04-line-height: 2.25rem;
+  --cds-productive-heading-04-letter-spacing: 0;
+  --cds-productive-heading-05-font-size: 2rem;
+  --cds-productive-heading-05-font-weight: 400;
+  --cds-productive-heading-05-line-height: 2.5rem;
+  --cds-productive-heading-05-letter-spacing: 0;
+  --cds-productive-heading-06-font-size: 2rem;
+  --cds-productive-heading-06-font-weight: 300;
+  --cds-productive-heading-06-line-height: 3.125rem;
+  --cds-productive-heading-06-letter-spacing: 0;
+
+  /* ---- Spacing: Carbon v10 layout scale --------------------------- */
+  --cds-spacing-01: 0.125rem;
+  --cds-spacing-02: 0.25rem;
+  --cds-spacing-03: 0.5rem;
+  --cds-spacing-04: 0.75rem;
+  --cds-spacing-05: 1rem;
+  --cds-spacing-06: 1.5rem;
+  --cds-spacing-07: 2rem;
+  --cds-spacing-08: 2.5rem;
+  --cds-spacing-09: 3rem;
+  --cds-spacing-10: 4rem;
+  --cds-spacing-11: 5rem;
+  --cds-spacing-12: 6rem;
+  --cds-spacing-13: 10rem;
+
+  /* ---- App fonts --------------------------------------------------- */
+  --tl-font-sans: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial,
+    sans-serif;
+  --tl-font-mono: "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, Consolas,
+    monospace;
+}
+
+/* ---- Base ---------------------------------------------------------- */
+html {
+  background: var(--cds-ui-background);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--cds-ui-background);
+  color: var(--cds-text-01);
+  font-family: var(--tl-font-sans);
+  font-size: var(--cds-body-short-01-font-size);
+  font-weight: var(--cds-body-short-01-font-weight);
+  line-height: var(--cds-body-long-01-line-height);
+  letter-spacing: var(--cds-body-short-01-letter-spacing);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tl-hidden {
+  display: none !important;
+}
+
+.tl-app {
+  max-width: 61rem;
+  /* The Carbon UI shell header is position:fixed at 3rem — clear it. */
+  margin: 3rem auto 0;
+  padding: var(--cds-spacing-07) var(--cds-spacing-07) var(--cds-spacing-09);
+}
+
+.tl-app:focus {
+  outline: none;
+}
+
+/* ---- View title bar ------------------------------------------------ */
+.tl-titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-spacing-05);
+  margin-bottom: var(--cds-spacing-07);
+}
+
+.tl-title {
+  margin: 0;
+  font-size: var(--cds-productive-heading-03-font-size);
+  font-weight: var(--cds-productive-heading-03-font-weight);
+  line-height: var(--cds-productive-heading-03-line-height);
+  letter-spacing: var(--cds-productive-heading-03-letter-spacing);
+  scroll-margin-top: 3.5rem;
+}
+
+.tl-title:focus {
+  outline: none;
+}
+
+/* ---- Home ----------------------------------------------------------- */
+.tl-home-head {
+  margin-bottom: var(--cds-spacing-07);
+}
+
+.tl-home-head .tl-title {
+  font-size: var(--cds-productive-heading-04-font-size);
+  line-height: var(--cds-productive-heading-04-line-height);
+}
+
+.tl-home-sub {
+  margin: var(--cds-spacing-03) 0 0;
+  max-width: 38rem;
+  color: var(--cds-text-02);
+}
+
+.tl-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cds-spacing-05);
+}
+.tl-tile::part(link) {
+  display: flex;
+  flex-direction: column;
+  min-height: 15rem;
+  padding: var(--cds-spacing-06);
+}
+
+.tl-tile-kicker {
+  margin-bottom: var(--cds-spacing-03);
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+  font-weight: 600;
+  letter-spacing: 0.32px;
+  text-transform: uppercase;
+}
+
+.tl-tile-title {
+  margin: 0 0 var(--cds-spacing-04);
+  color: var(--cds-text-01);
+  font-size: var(--cds-productive-heading-03-font-size);
+  font-weight: var(--cds-productive-heading-03-font-weight);
+  line-height: var(--cds-productive-heading-03-line-height);
+}
+
+.tl-tile-body {
+  margin: 0;
+  color: var(--cds-text-02);
+}
+
+.tl-tile-foot {
+  margin: 0;
+  margin-top: auto;
+  padding-top: var(--cds-spacing-05);
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+  line-height: var(--cds-caption-01-line-height);
+}
+
+/* Compact permissions summary (home). */
+.tl-perms {
+  margin-top: var(--cds-spacing-07);
+}
+
+.tl-perms-title {
+  margin: 0 0 var(--cds-spacing-03);
+  color: var(--cds-text-01);
+  font-size: var(--cds-productive-heading-01-font-size);
+  font-weight: var(--cds-productive-heading-01-font-weight);
+  line-height: var(--cds-productive-heading-01-line-height);
+}
+
+.tl-perms-tile {
+  display: block;
+  padding: var(--cds-spacing-05);
+}
+
+.tl-perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cds-spacing-05);
+  padding: var(--cds-spacing-03) 0;
+}
+
+.tl-perm-row + .tl-perm-row {
+  border-top: 1px solid var(--cds-border-subtle);
+}
+
+.tl-perm-note {
+  margin: var(--cds-spacing-03) 0 0;
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+  line-height: var(--cds-caption-01-line-height);
+}
+
+/* ---- Sections / forms ---------------------------------------------- */
+fieldset.tl-section {
+  border: 0;
+  margin: 0 0 var(--cds-spacing-07);
+  padding: 0;
+  min-width: 0;
+}
+
+.tl-section {
+  margin: 0 0 var(--cds-spacing-07);
+}
+
+/* Radio group items stretch by default in carbon-web-components; keep
+   horizontal groups content-width like Carbon React. */
+bx-radio-button-group[orientation="horizontal"] bx-radio-button {
+  flex: 0 1 auto;
+}
+
+.tl-section-title {
+  margin: 0 0 var(--cds-spacing-04);
+  padding: 0;
+  color: var(--cds-text-01);
+  font-size: var(--cds-productive-heading-01-font-size);
+  font-weight: var(--cds-productive-heading-01-font-weight);
+  line-height: var(--cds-productive-heading-01-line-height);
+}
+
+.tl-helper {
+  margin: var(--cds-spacing-02) 0 0;
+  max-width: 34rem;
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+  line-height: var(--cds-caption-01-line-height);
+}
+
+.tl-announce {
+  margin: 0;
+  max-width: 40rem;
+}
+
+.tl-mono {
+  font-family: var(--tl-font-mono);
+  font-size: 0.8125rem;
+  color: var(--cds-text-02);
+}
+
+.tl-field {
+  margin: 0 0 var(--cds-spacing-05);
+}
+
+.tl-vd-wrap {
+  margin-top: var(--cds-spacing-05);
+}
+
+.tl-advanced {
+  display: block;
+}
+
+.tl-direct-wrap {
+  margin: var(--cds-spacing-03) 0 var(--cds-spacing-03) 1.875rem;
+  max-width: 24rem;
+}
+
+.tl-scan {
+  margin-top: var(--cds-spacing-05);
+}
+
+.tl-scan-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-spacing-04);
+  margin-bottom: var(--cds-spacing-03);
+}
+
+.tl-scan-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 2px;
+  max-width: 34rem;
+}
+
+.tl-scan-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--cds-spacing-04);
+  padding: var(--cds-spacing-03) var(--cds-spacing-05);
+  border: 0;
+  border-bottom: 1px solid var(--cds-border-subtle);
+  background: transparent;
+  color: var(--cds-text-01);
+  font-family: inherit;
+  font-size: var(--cds-body-short-01-font-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tl-scan-results li:last-child .tl-scan-row {
+  border-bottom: 0;
+}
+
+.tl-scan-row:hover {
+  background: var(--cds-hover-ui);
+}
+
+.tl-scan-row:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
+}
+
+.tl-selected > .tl-scan-row {
+  background: var(--cds-selected-ui);
+  box-shadow: inset 2px 0 0 0 var(--cds-border-interactive);
+}
+
+.tl-scan-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-scan-addr {
+  flex: none;
+  color: var(--cds-text-02);
+  font-family: var(--tl-font-mono);
+  font-size: var(--cds-caption-01-font-size);
+}
+
+.tl-scan-empty {
+  margin: 0;
+  padding: var(--cds-spacing-04) var(--cds-spacing-05);
+  color: var(--cds-text-03);
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 2px;
+  max-width: 34rem;
+}
+
+.tl-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cds-spacing-05);
+}
+
+.tl-actions {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--cds-spacing-04);
+  margin-top: var(--cds-spacing-06);
+}
+
+.tl-actions bx-btn {
+  flex: none;
+}
+
+.tl-action-help {
+  margin: 0;
+  max-width: 30rem;
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+  line-height: var(--cds-caption-01-line-height);
+  padding-top: var(--cds-spacing-03);
+}
+
+/* ---- Live session --------------------------------------------------- */
+.tl-live-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-spacing-05);
+  margin-bottom: var(--cds-spacing-05);
+}
+
+bx-inline-loading {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--cds-body-short-01-font-size);
+}
+
+.tl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cds-spacing-02);
+  margin-block: 0 0;
+  margin: 0 0 var(--cds-spacing-05);
+}
+
+.tl-stat-val {
+  color: var(--cds-text-01);
+  font-size: var(--cds-productive-heading-02-font-size);
+  font-weight: var(--cds-productive-heading-02-font-weight);
+  line-height: var(--cds-productive-heading-02-line-height);
+  font-variant-numeric: tabular-nums;
+}
+
+bx-structured-list {
+  max-width: 40rem;
+}
+
+.tl-ended {
+  margin: var(--cds-spacing-06) 0 0;
+  max-width: 40rem;
+}
+
+/* ---- Notifications -------------------------------------------------- */
+.tl-notes bx-inline-notification {
+  margin-bottom: var(--cds-spacing-04);
+  width: 100%;
+  max-width: none;
+}
+
+/* ---- Activity log --------------------------------------------------- */
+.tl-log-panel {
+  margin-top: var(--cds-spacing-05);
+  border-top: 1px solid var(--cds-border-subtle);
+  padding-top: var(--cds-spacing-05);
+}
+
+.tl-log-title {
+  margin: 0 0 var(--cds-spacing-03);
+  color: var(--cds-text-03);
+  font-size: var(--cds-caption-01-font-size);
+  font-weight: 600;
+  letter-spacing: 0.32px;
+  text-transform: uppercase;
+}
+
+.tl-log {
+  margin: 0;
+  padding: var(--cds-spacing-03) var(--cds-spacing-05);
+  height: 10.5rem;
+  overflow-y: auto;
+  background: var(--cds-ui-01);
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 2px;
+  list-style: none;
+  font-family: var(--tl-font-mono);
+  font-size: var(--cds-caption-01-font-size);
+  line-height: 1.5;
+}
+
+.tl-log li {
+  display: flex;
+  gap: var(--cds-spacing-04);
+}
+
+.tl-log-t {
+  flex: none;
+  color: var(--cds-text-03);
+}
+
+.tl-log-x {
+  color: var(--cds-text-02);
+  overflow-wrap: anywhere;
+}
+
+.tl-log-empty {
+  color: var(--cds-text-03);
+}
+
+/* ---- Responsive ------------------------------------------------------ */
+@media (max-width: 40rem) {
+  .tl-tiles {
+    grid-template-columns: 1fr;
+  }
+
+  .tl-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}

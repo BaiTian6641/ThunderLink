@@ -40,6 +40,7 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         res,
         virtual_display: _,
         max_frames,
+        audio,
         cancel,
     } = cfg;
     let stop = cancel.0.clone();
@@ -53,6 +54,9 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
 
     let mut sess = InitiatorSession::connect(addr, "thunderlink-initiator")?;
     let caps = sess.caps().clone();
+    if matches!(audio, Some(super::AudioSource::System)) {
+        anyhow::bail!("system audio capture is macOS-only in v1 (PipeWire planned)");
+    }
 
     // Default: stream at the target panel's NATIVE resolution (SPEC §1).
     let (width, height) = res.unwrap_or((caps.panel.width, caps.panel.height));
@@ -66,6 +70,8 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         bitrate_kbps: bitrate,
         chroma: tl_proto::Chroma::Yuv420,
         hdr: false,
+        audio: audio.is_some(),
+        audio_bitrate_kbps: audio.map(|_| 192),
     };
     log::info!(
         "requesting {width}x{height}@{:.2}Hz {codec:?} {bitrate} kbps",
@@ -172,6 +178,13 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     sess.start()?;
     log::info!("streaming started");
     ev.emit(super::EngineEvent::Streaming);
+
+    // Audio feeder (SPEC §12): sine source only on Linux v1.
+    if let Some(source) = audio {
+        let peer = SocketAddr::new(peer_ip, tl_proto::AUDIO_PORT);
+        let local = SocketAddr::new(any(), 0);
+        super::audio::spawn_audio_feeder(local, peer, source, 192, stop.clone())?;
+    }
 
     // Feedback worker: NACK retransmits / IDR requests from target.
     {

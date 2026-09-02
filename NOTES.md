@@ -175,6 +175,34 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   via Finder-attributed launch — System Settings auto-opens; terminal-
   launched runs inherit the terminal's grants so no prompt fires).
 
+- Audio v1.1 IMPLEMENTED + validated (2026-09-02, agent-built crates
+  personally re-verified): tl-audio (platform-neutral: vendored-static
+  libopus via opusic-sys — audiopus is an RC with broken CMake; opus
+  48k stereo 10ms, FEC+5% loss expectation, DTX, VBR; TLA1 UDP channel;
+  JitterBuffer 40ms with PLC/3-miss skip/wraparound; 15/15 tests on mac
+  AND linux container) and tl-macos-audio (Core Audio process tap via
+  ObjC-runtime CATapDescription + aggregate + IOProc + AudioConverter;
+  DefaultOutput AudioUnit playback; SDK-verified layouts; bounded 3s
+  teardown after observing 90s IOProc-destroy stalls on silent taps;
+  9/9 headless — live tap needs the audio TCC grant which attributes to
+  a bundled app, so it stayed in the exercised-but-silent path).
+  Engine: AudioSource (Sine/System), audio feeder/sink workers, stats
+  event; TargetCaps.accepts_audio + StreamConfig.audio negotiation
+  (tl-proto same-commit per convention); CLI: target --audio,
+  initiator --audio sine|system [--audio-freq].
+  §12.7 loopback validation (30 s, 1800 frames video + sine): 100.0
+  packets/s played, 0 concealed, 0 dropped — 100% delivery; drift
+  oscillates +30..+63 ms with NO accumulation (that band IS the
+  designed latency: 40 ms jitter depth + output buffer; growing desync
+  would trend — none; resample correction stays v2 per §12.5). Two
+  sink bugs found + fixed during validation: pop-rate (4 frames/tick =
+  4x drain late-dropping ~70%) and Empty-break (exited the loop before
+  depth filled). First GitHub publish: history purged of an accidental
+  106MB core dump + target-local trees (filter-branch; repo 572MB →
+  452KB), pushed main to github.com/BaiTian6641/ThunderLink.
+  x86_64 AppImage deferred: colima lacks --vz-rosetta on the running
+  VM and restarting it would destroy tl-build's toolchain.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

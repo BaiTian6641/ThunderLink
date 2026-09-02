@@ -82,6 +82,7 @@ fn any() -> IpAddr {
     IpAddr::V4(Ipv4Addr::UNSPECIFIED)
 }
 
+use super::audio;
 use super::ctrl::{set_reason, spawn_initiator_control_worker, EndReason};
 
 /// Shared "why did the session end" slot: control workers write the first
@@ -97,7 +98,7 @@ pub fn run_target(
     presenter: Option<EmbeddedPresenter>,
     ev: &EventSink,
 ) -> Result<()> {
-    let TargetConfig { bind, windowed, no_input, cancel } = cfg;
+    let TargetConfig { bind, windowed, no_input, audio_playback, cancel } = cfg;
     let stop = cancel.0.clone();
     let end_reason = reason_slot();
 
@@ -116,6 +117,7 @@ pub fn run_target(
         panel: panel_info,
         decoders: decoder_caps(),
         accepts_input: !no_input,
+        accepts_audio: audio_playback,
     };
     log::info!(
         "target panel: {}x{}@{:.2}Hz scale {}%; decoders: {:?}",
@@ -152,6 +154,7 @@ pub fn run_target(
     };
     let cfg = sess.await_config(&caps)?;
     log::info!("negotiated {cfg:?}");
+    let stream_audio = cfg.audio;
     ev.emit(super::EngineEvent::Negotiated(cfg.clone()));
     let peer_ip = sess.peer_addr().ip();
 
@@ -330,6 +333,29 @@ pub fn run_target(
         }
     }
 
+    // Audio playback (SPEC §12): UDP → jitter → opus → default output.
+    if audio_playback && stream_audio {
+        let bind = SocketAddr::new(bind, tl_proto::AUDIO_PORT);
+        let stop = stop.clone();
+        let ev = ev.clone();
+        std::thread::Builder::new().name("audio-sink".into()).spawn(move || {
+            let mut output = match tl_macos_audio::Output::new() {
+                Ok(o) => o,
+                Err(e) => {
+                    log::warn!("audio output unavailable ({e}); audio disabled");
+                    return;
+                }
+            };
+            if let Err(e) = output.start() {
+                log::warn!("audio output start failed ({e}); audio disabled");
+                return;
+            }
+            if let Err(e) = audio::run_audio_sink(bind, &stop, &ev, |pcm| output.write(pcm)) {
+                log::warn!("audio sink ended: {e}");
+            }
+        })?;
+    }
+
     // Present until the window closes or the session stops.
     match (presenter_owned, presenter_embedded) {
         (Some(p), _) => {
@@ -376,7 +402,45 @@ pub fn run_target(
     Ok(())
 }
 
+/// System-audio feeder (macOS): Core Audio process tap → opus → UDP at
+/// 100 pps (SPEC §12.2/§12.4). The tap's TCC prompt appears on first use.
+fn audio_tap_feeder(
+    bind: SocketAddr,
+    peer: SocketAddr,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
+    use std::sync::atomic::Ordering as O;
+
+    let mut tap = tl_macos_audio::SystemTap::new().context("open system audio tap")?;
+    let tx = tl_audio::AudioTx::bind(bind, peer).context("bind audio channel")?;
+    let mut enc = tl_audio::OpusEncoder::new(192).context("create opus encoder")?;
+    let mut seq: u32 = 0;
+    let mut next_tick = std::time::Instant::now() + std::time::Duration::from_millis(10);
+    while !stop.load(O::Relaxed) {
+        // 10 ms of interleaved stereo.
+        let pcm_f32 = tap.next_pcm(480);
+        let mut pcm = Vec::with_capacity(pcm_f32.len());
+        for &f in &pcm_f32 {
+            pcm.push((f.clamp(-1.0, 1.0) * 32767.0) as i16);
+        }
+        let pts = tl_proto::time::now_us();
+        if let Ok(packet) = enc.encode(&pcm) {
+            if !packet.is_empty() {
+                let _ = tx.send(seq, pts, &packet);
+            }
+        }
+        seq = seq.wrapping_add(1);
+        let now = std::time::Instant::now();
+        if next_tick > now {
+            std::thread::sleep(next_tick - now);
+        }
+        next_tick += std::time::Duration::from_millis(10);
+    }
+    Ok(())
+}
+
 // ---------------------------- initiator ------------------------------
+
 
 pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     let InitiatorConfig {
@@ -388,6 +452,7 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         res,
         virtual_display,
         max_frames,
+        audio,
         cancel,
     } = cfg;
     let stop = cancel.0.clone();
@@ -395,6 +460,9 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
 
     let mut sess = InitiatorSession::connect(addr, "thunderlink-initiator")?;
     let caps = sess.caps().clone();
+    if audio.is_some() && !caps.accepts_audio {
+        anyhow::bail!("audio requested but this target cannot play audio (SPEC §12.6)");
+    }
 
     // Default: stream at the target panel's NATIVE resolution (SPEC §1).
     let (width, height) = res.unwrap_or((caps.panel.width, caps.panel.height));
@@ -410,6 +478,8 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         bitrate_kbps: bitrate,
         chroma: Chroma::Yuv420,
         hdr: false,
+        audio: audio.is_some(),
+        audio_bitrate_kbps: audio.map(|_| 192),
     };
     log::info!(
         "requesting {width}x{height}@{:.2}Hz {codec:?} {bitrate} kbps",
@@ -513,6 +583,25 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     sess.start()?;
     log::info!("streaming started");
     ev.emit(super::EngineEvent::Streaming);
+
+    // Audio feeder (SPEC §12): 100 pps opus over UDP 47780.
+    if let Some(source) = audio {
+        let peer = SocketAddr::new(peer_ip, tl_proto::AUDIO_PORT);
+        let local = SocketAddr::new(any(), 0);
+        match source {
+            super::AudioSource::Sine { .. } => {
+                audio::spawn_audio_feeder(local, peer, source, 192, stop.clone())?;
+            }
+            super::AudioSource::System => {
+                let stop = stop.clone();
+                std::thread::Builder::new().name("audio-tap".into()).spawn(move || {
+                    if let Err(e) = audio_tap_feeder(local, peer, stop) {
+                        log::warn!("system audio disabled: {e:#}");
+                    }
+                })?;
+            }
+        }
+    }
 
     // Feedback worker: NACK retransmits / IDR requests from target.
     {

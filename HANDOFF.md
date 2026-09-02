@@ -3,7 +3,7 @@
 For the next agent/operator. Read PLAN.md (strategy/milestones), SPEC.md
 (wire protocol + crate contracts), NOTES.md (decision/risk log) first; this
 file is the operational state dump: what exists, what is verified, how to
-prove it, and what to do next. Last updated 2026-09-02 (post-Linux: initiator crates + AppImage).
+prove it, and what to do next. Last updated 2026-09-02 (post-audio: v1.1 implemented + validated).
 
 ## 1. Where we are
 

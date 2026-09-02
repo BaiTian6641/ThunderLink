@@ -22,6 +22,8 @@ pub const CONTROL_PORT: u16 = 47776;
 pub const VIDEO_PORT: u16 = 47777;
 pub const FEEDBACK_PORT: u16 = 47778;
 pub const INPUT_PORT: u16 = 47779;
+/// Audio channel (v1.1, SPEC §12).
+pub const AUDIO_PORT: u16 = 47780;
 
 /// Total UDP datagram budget including the 24-byte video header.
 /// Conservative: works without jumbo frames on Thunderbolt bridges.

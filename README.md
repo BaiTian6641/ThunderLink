@@ -32,6 +32,9 @@ Status: **macOS v1 works end-to-end on one machine** (loopback). See
   `tl-macos-display`
 - mDNS discovery (`_thunderlink._tcp`) on the target, `--discover` on the
   initiator
+- Audio (v1.1): system-audio or synthetic-sine streaming (Opus, UDP 47780,
+  jitter buffer + PLC) — `target --audio` + `initiator --audio
+  sine|system`; validated gap-free at 100% packet delivery on loopback
 
 Not yet: Linux/Windows platform crates, audio, USB/IP, real-Thunderbolt-
 link validation, packaging.

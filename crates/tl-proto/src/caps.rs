@@ -48,6 +48,8 @@ pub struct TargetCaps {
     pub decoders: Vec<CodecCaps>,
     /// Target will capture and forward local keyboard/mouse.
     pub accepts_input: bool,
+    /// Target can play an audio stream (SPEC §12).
+    pub accepts_audio: bool,
 }
 
 /// The initiator's chosen stream parameters.
@@ -60,6 +62,10 @@ pub struct StreamConfig {
     pub bitrate_kbps: u32,
     pub chroma: Chroma,
     pub hdr: bool,
+    /// Stream system audio alongside video (SPEC §12).
+    pub audio: bool,
+    /// Audio encoder bitrate (kbps); None = encoder default (192).
+    pub audio_bitrate_kbps: Option<u32>,
 }
 
 impl TargetCaps {
@@ -102,6 +108,7 @@ mod tests {
     #[test]
     fn supports_checks_all_dimensions() {
         let caps = TargetCaps {
+            accepts_audio: false,
             name: "t".into(),
             panel: PanelInfo {
                 width: 5120,
@@ -121,6 +128,8 @@ mod tests {
             accepts_input: true,
         };
         let ok = StreamConfig {
+            audio: false,
+            audio_bitrate_kbps: None,
             codec: Codec::Hevc,
             width: 5120,
             height: 2880,

@@ -1,0 +1,16 @@
+[package]
+name = "tl-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tl-proto = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+# Stable safe libopus bindings; `opusic-sys` builds a vendored static
+# libopus from source via CMake (>= 3.16) — no system Opus packages.
+# Chosen over `audiopus`: 1.x does not exist and 0.3.0-rc.0 vendors a
+# pre-3.5 CMakeLists that modern CMake (>= 4) rejects.
+opus = "0.4"

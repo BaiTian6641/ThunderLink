@@ -564,6 +564,8 @@ mod tests {
             bitrate_kbps: 20_000,
             chroma: Chroma::Yuv420,
             hdr: false,
+            audio: false,
+            audio_bitrate_kbps: None,
         }
     }
 

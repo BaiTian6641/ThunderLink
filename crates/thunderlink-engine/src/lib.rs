@@ -48,6 +48,8 @@ pub enum EngineEvent {
     /// Latest measured encode-to-decode latency (target side, ~every 120
     /// frames).
     LatencyMs(f64),
+    /// ~1 Hz audio playback statistics (target side, when audio streams).
+    Audio(AudioStats),
     /// Session over; reason string is human-oriented.
     Ended(String),
     /// Non-fatal degraded-mode notice (input disabled, etc.).
@@ -90,6 +92,25 @@ pub enum Source {
     Screen,
 }
 
+/// Audio source for the initiator (SPEC §12). `Sine` needs no permissions
+/// (validation harness); `System` is the real capture path (macOS Core
+/// Audio tap; audio TCC prompt on first use).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AudioSource {
+    Sine { freq_hz: f64 },
+    System,
+}
+
+/// ~1 Hz audio playback statistics (SPEC §12.5 measurement duty).
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub struct AudioStats {
+    pub played: u64,
+    pub concealed: u64,
+    pub dropped: u64,
+    /// Playback head vs wall clock (positive = behind).
+    pub drift_ms: f64,
+}
+
 /// Target role configuration.
 #[derive(Clone, Debug)]
 pub struct TargetConfig {
@@ -99,6 +120,8 @@ pub struct TargetConfig {
     pub windowed: bool,
     /// Do not capture/forward this machine's keyboard/mouse.
     pub no_input: bool,
+    /// Accept and play an audio stream (SPEC §12).
+    pub audio_playback: bool,
     pub cancel: CancelToken,
 }
 
@@ -115,6 +138,8 @@ pub struct InitiatorConfig {
     pub res: Option<(u32, u32)>,
     pub virtual_display: bool,
     pub max_frames: Option<u64>,
+    /// Stream audio alongside video (SPEC §12).
+    pub audio: Option<AudioSource>,
     pub cancel: CancelToken,
 }
 
@@ -215,6 +240,7 @@ fn ordered_candidate_addrs(peer: &tl_net::discovery::Peer) -> Vec<SocketAddr> {
         .collect()
 }
 
+mod audio;
 mod ctrl;
 
 #[cfg(target_os = "macos")]

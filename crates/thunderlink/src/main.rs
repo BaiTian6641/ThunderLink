@@ -12,8 +12,8 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use thunderlink_engine::{
-    announce_target, discover_target, run_initiator, run_target, CancelToken, EventSink,
-    InitiatorConfig, Source, TargetConfig,
+    announce_target, discover_target, run_initiator, run_target, AudioSource, CancelToken,
+    EventSink, InitiatorConfig, Source, TargetConfig,
 };
 use tl_proto::{Codec, CONTROL_PORT};
 
@@ -39,6 +39,12 @@ impl From<SourceKind> for Source {
             SourceKind::Screen => Source::Screen,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum AudioKind {
+    Sine,
+    System,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -69,6 +75,9 @@ enum Cmd {
         /// Do not forward this machine's keyboard/mouse.
         #[arg(long)]
         no_input: bool,
+        /// Accept and play the initiator's audio stream.
+        #[arg(long)]
+        audio: bool,
     },
     /// Stream a display to a target.
     Initiator {
@@ -103,6 +112,13 @@ enum Cmd {
         /// With `--source screen` the virtual display is captured.
         #[arg(long)]
         r#virtual: bool,
+        /// Stream audio: `sine` (synthetic 440 Hz, no permissions) or
+        /// `system` (this machine's system audio; macOS).
+        #[arg(long)]
+        audio: Option<AudioKind>,
+        /// Sine frequency in Hz when --audio sine (default 440).
+        #[arg(long, default_value_t = 440.0)]
+        audio_freq: f64,
     },
 }
 
@@ -110,7 +126,7 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Target { bind, windowed, no_input } => {
+        Cmd::Target { bind, windowed, no_input, audio } => {
             // Announce on mDNS until the session ends (SPEC §3); a failure
             // is non-fatal — direct-IP --connect still works.
             let announcer = announce_target("thunderlink-target")
@@ -124,6 +140,7 @@ fn main() -> Result<()> {
                     bind,
                     windowed,
                     no_input,
+                    audio_playback: audio,
                     cancel: CancelToken::new(),
                 },
                 None,
@@ -143,6 +160,8 @@ fn main() -> Result<()> {
             res,
             frames,
             r#virtual,
+            audio,
+            audio_freq,
         } => {
             let addr = match (connect, discover) {
                 (Some(c), false) => parse_connect(&c)?,
@@ -162,6 +181,10 @@ fn main() -> Result<()> {
                     res: res.as_deref().map(parse_res).transpose()?,
                     virtual_display: r#virtual,
                     max_frames: frames,
+                    audio: audio.map(|k| match k {
+                        AudioKind::Sine => AudioSource::Sine { freq_hz: audio_freq },
+                        AudioKind::System => AudioSource::System,
+                    }),
                     cancel: CancelToken::new(),
                 },
                 &EventSink::discarded(),

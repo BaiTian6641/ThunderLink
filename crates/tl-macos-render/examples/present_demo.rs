@@ -39,6 +39,8 @@ fn main() -> Result<()> {
         bitrate_kbps: 8_000,
         chroma: Chroma::Yuv420,
         hdr: false,
+        audio: false,
+        audio_bitrate_kbps: None,
     };
 
     let presenter = Presenter::new(Mode::Windowed)?;

@@ -9,17 +9,20 @@ tl-proto = { workspace = true }
 tl-net = { workspace = true }
 tl-session = { workspace = true }
 tl-video = { workspace = true }
+tl-audio = { path = "../tl-audio" }
 serde = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-tl-linux-capture = { path = "../tl-linux-capture" }
-tl-linux-input = { path = "../tl-linux-input" }
-
 [target.'cfg(target_os = "macos")'.dependencies]
+tl-macos-audio = { path = "../tl-macos-audio" }
 tl-macos-capture = { workspace = true }
 tl-macos-render = { workspace = true }
 tl-macos-input = { workspace = true }
 tl-macos-display = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tl-linux-capture = { path = "../tl-linux-capture" }
+tl-linux-input = { path = "../tl-linux-input" }
+

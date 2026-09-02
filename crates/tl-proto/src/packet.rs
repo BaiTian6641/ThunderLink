@@ -3,6 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 pub const VIDEO_MAGIC: u32 = u32::from_le_bytes(*b"TLV1");
+/// Audio datagram magic (v1.1, SPEC §12.4): `TLA1`.
+pub const AUDIO_MAGIC: u32 = u32::from_le_bytes(*b"TLA1");
+/// Fixed audio datagram header length: magic + seq + pts.
+pub const AUDIO_HEADER_LEN: usize = 16;
 pub const VIDEO_HEADER_LEN: usize = 24;
 
 /// `VideoHeader.flags`: unit starts with an IDR/keyframe.

@@ -18,6 +18,8 @@ fn hevc_roundtrip_30_frames() {
         bitrate_kbps: 8_000,
         chroma: Chroma::Yuv420,
         hdr: false,
+        audio: false,
+        audio_bitrate_kbps: None,
     };
     let mut src = TestPattern::new(cfg.width, cfg.height, 30);
     let mut enc = Encoder::new(&cfg).expect("encoder init");

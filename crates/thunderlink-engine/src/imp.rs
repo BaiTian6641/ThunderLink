@@ -29,6 +29,9 @@ use tl_session::{InitiatorSession, TargetSession};
 
 use super::{EventSink, InitiatorConfig, Source, TargetConfig};
 
+/// Schedules a closure onto the embedder's AppKit main thread.
+pub type OnMain = StdArc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>;
+
 use std::sync::Arc as StdArc;
 use tl_macos_render::present::Presenter;
 
@@ -39,14 +42,14 @@ use tl_macos_render::present::Presenter;
 /// call them directly).
 pub struct EmbeddedPresenter {
     presenter: StdArc<Presenter>,
-    on_main: StdArc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>,
+    on_main: OnMain,
 }
 
 impl EmbeddedPresenter {
     /// MUST be called on the AppKit main thread.
     pub fn new(
         windowed: bool,
-        on_main: StdArc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>,
+        on_main: OnMain,
     ) -> Result<Self> {
         let mode = if windowed {
             tl_macos_render::present::Mode::Windowed

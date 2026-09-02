@@ -3,7 +3,7 @@
 For the next agent/operator. Read PLAN.md (strategy/milestones), SPEC.md
 (wire protocol + crate contracts), NOTES.md (decision/risk log) first; this
 file is the operational state dump: what exists, what is verified, how to
-prove it, and what to do next. Last updated 2026-09-01 (post-TCC + audio SPEC).
+prove it, and what to do next. Last updated 2026-09-02 (post-GUI: engine crate + Carbon desktop app).
 
 ## 1. Where we are
 
@@ -22,12 +22,27 @@ full macOS implementation of both roles, point-to-point, no crypto.
   (role TXT) for its lifetime; initiator `--discover [--discover-timeout N]`
   browses and probes candidate addrs (IPv4 → global v6 → rest). The control
   listener survives stray connections/probes (accept retried ≤16 failures).
+- **Desktop GUI app** (`apps/desktop`, Tauri v2 + IBM Carbon web components,
+  dark g100): role picker, both role views with live stats + activity log,
+  permission banners reading real TCC state, mDNS target scanning,
+  direct-address input, virtual-display/source/codec controls. Verified
+  FULL-STACK on the real .app (AX-driven): Start target → CLI initiator
+  streamed 1080p60 through the embedded fullscreen presenter, 8–28 ms,
+  clean end + Start-again. GUI automation path: System Events "entire
+  contents" exposes WKWebView buttons. Frontend has a browser MOCK mode
+  (`npx vite`, no Tauri needed) for design work.
+- **thunderlink-engine crate**: both roles as embeddable APIs
+  (EngineEvent stream, CancelToken, EmbeddedPresenter for GUI hosts);
+  the CLI is a thin front-end over it. Presenter lifecycle split:
+  show/hide main-thread; start/stop render + poll_events any-thread.
 - README.md exists: usage, build/validation, **no-auth threat model**.
   `--virtual` extended-display mode: creates a real OS-visible virtual
   display at the target panel's native res/HiDPI, captures it, removes it on
   teardown. Lifecycle smoke-verified (system_profiler mid-run / 0 after).
 
-**Not yet:** real Thunderbolt-link test (needs 2nd host), Linux/Windows crates,
+**Not yet:** real Thunderbolt-link test (needs 2nd host), Linux/Windows
+implementation (Linux initiator plan ready: **docs/LINUX-PORT.md** — core,
+engine, and the Carbon UI transfer unchanged),
 USB/IP, packaging, any crypto, audio implementation (contract: SPEC §12).
 
 **TCC (2026-09-01 late): grants are in place and LIVE-verified.** Screen
@@ -57,8 +72,14 @@ crates/
                     table. 16 tests.
   tl-macos-display  CGVirtualDisplay (runtime class lookup only), panel info
                     + EDID (IOKit), display_frame helper. 3 tests.
-  thunderlink       CLI binary: `target` / `initiator` roles, all thread
-                    orchestration lives here.
+  thunderlink-engine Both roles as embeddable APIs: EngineEvent stream,
+                    CancelToken, discover/browse helpers, EmbeddedPresenter
+                    (macOS imp; Linux imp planned per docs/LINUX-PORT.md).
+  thunderlink       CLI binary: thin argument parser over the engine.
+apps/desktop        Tauri v2 app (SEPARATE cargo workspace): Carbon g100
+                    frontend (vite, mock mode), Rust command layer bound
+                    to the engine; icon set generated. Build:
+                    `cd apps/desktop && npx tauri build`.
 ```
 
 ## 3. How to validate (do this first after any change)
@@ -171,7 +192,9 @@ reports in NOTES/git history):
 5. ~~Wire `discovery`/mDNS into the binary~~ **done 2026-09-01 night**
    (target announces; `--discover` on initiator; addr probing; probe-proof
    accept loop).
-6. **Audio implementation** against the now-written contract (SPEC §12;
+6. **Linux initiator** per docs/LINUX-PORT.md (needs a Linux builder —
+   never write the FFI blind on macOS). Audio implementation against the
+   now-written contract (SPEC §12;
    start with the TCC-free sine tone source, then Core Audio tap);
    USB/IP (v2); adaptive bitrate ladder hooks (Report is wired; policy
    not implemented).

@@ -111,6 +111,32 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   audio tap (AudioHardwareCreateProcessTap + aggregate device) — PLAN
   §6 updated; no BlackHole-style driver needed. tl-proto types land
   with the implementation.
+- GUI + engine session (2026-09-02, per owner direction: complete the Mac
+  side with a good UI, then prepare Linux initiator; IBM Carbon design):
+  (a) role logic extracted from the binary into `thunderlink-engine`
+  (EngineEvent stream + CancelToken; CLI is a thin front-end, behavior
+  identical, smoke-verified); (b) Tauri v2 + carbon-web-components app
+  (`apps/desktop`, separate workspace to keep the tauri dep tree out of
+  the core lockfile) — role picker, both role views, live stats, activity
+  log, permission banners reading REAL TCC state; frontend built by a
+  designer sub-agent and personally browser-verified in mock mode, then
+  visually reviewed (vision-model "icon/notification" complaints were
+  false positives — warning--glyph circle + inverse g100 notification are
+  canonical Carbon v10); (c) found + fixed the architecture gap that the
+  GUI exposed: Presenter lifecycle split (show/hide main-thread;
+  start/stop render + poll_events any-thread; run() rebuilt on those,
+  E2E green), engine takes Option<EmbeddedPresenter>; (d) FULL-STACK
+  verified on the real .app via accessibility driving: click Target →
+  Start → mDNS announce → CLI initiator streamed 1080p60 HEVC through the
+  embedded FULLSCREEN presenter, 8–28 ms latency, clean end + Start-again
+  UI. AX scripting of the WKWebView (System Events entire contents) works
+  and is the GUI automation path. docs/LINUX-PORT.md written (crate map,
+  port order, risks; core+engine+UI transfer unchanged). Gotchas: tauri
+  needs node (brew), icons via `npx tauri icon` from a source PNG;
+  carbon-web-components 1.21 registers `bx-*` (not cds-*); sync Tauri
+  commands run on the main thread (that's what makes EmbeddedPresenter
+  creation legal); first mDNS resolve may need the probe-retry loop
+  (already in).
 
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated

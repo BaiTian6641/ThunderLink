@@ -107,11 +107,19 @@ mod tcc {
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
         fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
     }
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(
+            options: core_foundation_sys::dictionary::CFDictionaryRef,
+        ) -> bool;
+        // Framework CFSTR constant (HIServices): option key that makes the
+        // trust check show the Accessibility consent prompt.
+        static kAXTrustedCheckOptionPrompt: core_foundation_sys::string::CFStringRef;
     }
+
     pub fn screen_recording() -> bool {
         // SAFETY: nullary C function, no preconditions.
         unsafe { CGPreflightScreenCaptureAccess() }
@@ -119,6 +127,38 @@ mod tcc {
     pub fn accessibility() -> bool {
         // SAFETY: nullary C function, no preconditions.
         unsafe { AXIsProcessTrusted() }
+    }
+
+    /// Show the system consent prompts for any missing grants (first-run
+    /// flow). Screen Recording via CGRequestScreenCaptureAccess; Accessibility
+    /// via AXIsProcessTrustedWithOptions with the prompt option. macOS will
+    /// not re-prompt once the user has explicitly denied — the Settings deep
+    /// links remain the fallback.
+    pub fn request_missing() {
+        if !screen_recording() {
+            // SAFETY: nullary; shows the Screen Recording prompt if allowed.
+            unsafe { CGRequestScreenCaptureAccess() };
+        }
+        if !accessibility() {
+            // SAFETY: dictionary built from framework constants below; the
+            // option key/value are valid CF objects owned by the dict.
+            unsafe {
+                let key: core_foundation_sys::string::CFStringRef = kAXTrustedCheckOptionPrompt;
+                let value = core_foundation_sys::number::kCFBooleanTrue;
+                let options = core_foundation_sys::dictionary::CFDictionaryCreate(
+                    core_foundation_sys::base::kCFAllocatorDefault,
+                    &key as *const _ as *const core_foundation_sys::base::CFTypeRef,
+                    &value as *const _ as *const core_foundation_sys::base::CFTypeRef,
+                    1,
+                    &core_foundation_sys::dictionary::kCFTypeDictionaryKeyCallBacks,
+                    &core_foundation_sys::dictionary::kCFTypeDictionaryValueCallBacks,
+                );
+                if !options.is_null() {
+                    AXIsProcessTrustedWithOptions(options);
+                    core_foundation_sys::base::CFRelease(options as *const _);
+                }
+            };
+        }
     }
 }
 
@@ -130,6 +170,7 @@ mod tcc {
     pub fn accessibility() -> bool {
         true
     }
+    pub fn request_missing() {}
 }
 
 #[cfg(target_os = "macos")]
@@ -349,6 +390,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_permissions,
+            request_permissions,
             open_permission_pane,
             list_targets,
             start_target,
@@ -360,6 +402,14 @@ pub fn run() {
 }
 
 /// Open the relevant Privacy & Security pane in System Settings.
+/// Trigger the OS consent prompts for any missing permissions (macOS
+/// first-run flow; no-op elsewhere). Safe to call repeatedly.
+#[tauri::command]
+fn request_permissions() -> Result<(), String> {
+    tcc::request_missing();
+    Ok(())
+}
+
 #[tauri::command]
 fn open_permission_pane(kind: String) -> Result<(), String> {
     let pane = match kind.as_str() {

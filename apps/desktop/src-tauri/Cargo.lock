@@ -3607,6 +3607,7 @@ dependencies = [
 name = "thunderlink-desktop"
 version = "0.1.0"
 dependencies = [
+ "core-foundation-sys",
  "env_logger",
  "log",
  "parking_lot",

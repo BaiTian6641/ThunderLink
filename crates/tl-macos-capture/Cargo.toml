@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 tl-proto = { workspace = true }
 anyhow = { workspace = true }
+tl-testsrc = { workspace = true }
 log = { workspace = true }
 objc2 = "0.6"
 objc2-foundation = "0.3"

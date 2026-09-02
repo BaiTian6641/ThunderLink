@@ -947,6 +947,7 @@ dependencies = [
  "objc2-screen-capture-kit",
  "parking_lot",
  "tl-proto",
+ "tl-testsrc",
 ]
 
 [[package]]
@@ -1025,6 +1026,13 @@ dependencies = [
  "log",
  "tl-net",
  "tl-proto",
+]
+
+[[package]]
+name = "tl-testsrc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]

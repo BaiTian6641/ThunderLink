@@ -82,17 +82,12 @@ fn any() -> IpAddr {
     IpAddr::V4(Ipv4Addr::UNSPECIFIED)
 }
 
+use super::ctrl::{set_reason, spawn_initiator_control_worker, EndReason};
+
 /// Shared "why did the session end" slot: control workers write the first
 /// reason; the role function emits it as `EngineEvent::Ended`.
-fn reason_slot() -> Arc<Mutex<Option<String>>> {
+fn reason_slot() -> EndReason {
     Arc::new(Mutex::new(None))
-}
-
-fn set_reason(slot: &Arc<Mutex<Option<String>>>, reason: impl Into<String>) {
-    let mut g = slot.lock();
-    if g.is_none() {
-        *g = Some(reason.into());
-    }
 }
 
 // ------------------------------ target ------------------------------
@@ -596,64 +591,9 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         })?;
     }
 
-    // Control worker: echo heartbeats, log target stats, watch Stop/Bye.
-    let (ctrl_tx, ctrl_rx) = std::sync::mpsc::channel::<()>();
-    {
-        let stop = stop.clone();
-        let ev = ev.clone();
-        let end_reason = end_reason.clone();
-        std::thread::Builder::new().name("control".into()).spawn(move || {
-            let chan = sess.channel();
-            let _ = chan.set_read_timeout(Some(Duration::from_millis(500)));
-            let mut last_hb = 0i64;
-            let mut last_recv = std::time::Instant::now();
-            while !stop.load(Ordering::Relaxed) {
-                match chan.recv() {
-                    Ok(Msg::Heartbeat { ts_us }) => {
-                        last_recv = std::time::Instant::now();
-                        if ts_us != last_hb {
-                            // Echo for RTT measurement on the target.
-                            let _ = chan.send(&Msg::Heartbeat { ts_us });
-                            last_hb = ts_us;
-                        }
-                    }
-                    Ok(Msg::Stats(s)) => {
-                        last_recv = std::time::Instant::now();
-                        log::info!(
-                            "target: {} fps decoded, {} kbps, rtt {} us",
-                            s.decoded_fps,
-                            s.bitrate_kbps,
-                            s.rtt_us
-                        );
-                        ev.emit(super::EngineEvent::Stats(s));
-                    }
-                    Ok(Msg::Stop) | Ok(Msg::Bye) => {
-                        set_reason(&end_reason, "ended by target");
-                        break;
-                    }
-                    Ok(_) => last_recv = std::time::Instant::now(),
-                    Err(e)
-                        if e.kind() == std::io::ErrorKind::TimedOut
-                            || e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        log::warn!("control channel: {e}");
-                        set_reason(&end_reason, format!("control channel: {e}"));
-                        break;
-                    }
-                }
-                // Liveness: tear down on 5 s of silence (SPEC §4).
-                if last_recv.elapsed() > Duration::from_secs(5) {
-                    log::warn!("control channel silent for 5 s; tearing down");
-                    set_reason(&end_reason, "control channel silent for 5 s");
-                    break;
-                }
-            }
-            stop.store(true, Ordering::SeqCst);
-            let _ = chan.send(&Msg::Stop);
-            let _ = chan.send(&Msg::Bye);
-            let _ = ctrl_tx.send(());
-        })?;
-    }
+    // Control worker (shared, platform-neutral): echo heartbeats,
+    // stats, Stop/Bye, 5 s silence teardown.
+    let ctrl_rx = spawn_initiator_control_worker(sess, stop.clone(), ev.clone(), end_reason.clone())?;
 
     // Encode worker (this thread): frames -> VT encode -> UDP.
     let counters = tl_video::Counters::default();

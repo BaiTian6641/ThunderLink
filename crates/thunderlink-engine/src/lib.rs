@@ -215,6 +215,8 @@ fn ordered_candidate_addrs(peer: &tl_net::discovery::Peer) -> Vec<SocketAddr> {
         .collect()
 }
 
+mod ctrl;
+
 #[cfg(target_os = "macos")]
 mod imp;
 #[cfg(target_os = "macos")]

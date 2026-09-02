@@ -17,6 +17,7 @@ tl-macos-render = { path = "crates/tl-macos-render" }
 tl-macos-input = { path = "crates/tl-macos-input" }
 tl-macos-display = { path = "crates/tl-macos-display" }
 thunderlink-engine = { path = "crates/thunderlink-engine" }
+tl-testsrc = { path = "crates/tl-testsrc" }
 
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"

@@ -877,6 +877,26 @@ async function boot() {
   ]);
   state.status = st ?? { running: false, role: null };
   state.perms = perms ?? { screen_recording: true, accessibility: true, platform: "" };
+  // First run: automatically trigger the OS consent prompts for any
+  // missing permission (macOS; no-op elsewhere). Once per install —
+  // macOS won't re-prompt after an explicit denial; the Open Settings
+  // buttons remain the manual path.
+  if (
+    state.perms &&
+    !(state.perms.screen_recording && state.perms.accessibility) &&
+    !localStorage.getItem("tl_perm_autoreq")
+  ) {
+    localStorage.setItem("tl_perm_autoreq", "1");
+    invoke("request_permissions").catch(() => null);
+    // The grant may land moments later; refresh the pills once.
+    setTimeout(async () => {
+      const p = await invoke("get_permissions").catch(() => null);
+      if (p) {
+        state.perms = p;
+        syncPermSummary();
+      }
+    }, 6000);
+  }
   if (state.status.running && state.status.role) {
     // App reloaded mid-session: jump straight into that role's live view.
     state.view = state.status.role === "target" ? "target" : "initiator";

@@ -245,6 +245,20 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   ubuntu:latest) and tl-build-x64 (amd64, ubuntu:24.04) both mount
   /work; npm install in one swaps esbuild arch — re-run on mac after.
 
+- AppImage segfault FIX + amd64-first (2026-09-02, user report): the
+  manually-assembled x86_64 AppImage segfaulted on REAL hardware. Root
+  cause: the AppImage runtime reads the squashfs length from u64 LE at
+  offset 0x0210 — I extracted the runtime from linuxdeploy without
+  patching it, so it had LINUXDEPLOY's own squashfs length (4.3 MB)
+  baked in instead of ours (30.8 MB). Fix: patch 0x0210 after assembly
+  (now in scripts/build-universal-appimage.sh). Note: the linuxdeploy
+  aarch64 runtime has zeros at 0x0208/0x0210 (ELF-size mode) — don't
+  patch those. Also: Docker Desktop's credential helper broke pulls
+  (fix: remove credsStore from ~/.docker/config.json); containers
+  freed per user request (colima stopped). Build script restructured:
+  amd64 is now PRIMARY (most TB/USB4 systems are x86_64), aarch64 is
+  secondary (--arm flag); universal.sh rebuilt with fixed x86_64.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

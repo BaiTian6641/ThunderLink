@@ -23,6 +23,7 @@ use tl_proto::{
 };
 use tl_session::InitiatorSession;
 
+use super::audio;
 use super::ctrl::{spawn_initiator_control_worker, EndReason};
 use super::{EventSink, InitiatorConfig, Source};
 
@@ -50,6 +51,36 @@ impl EncoderChoice {
             Self::X264(e) => e.encode(frame),
         }
     }
+}
+
+fn linux_system_audio_feeder(
+    bind: SocketAddr,
+    peer: SocketAddr,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
+    use std::sync::atomic::Ordering;
+
+    let mut cap = audio::PipeWireCapture::new().context("open system audio capture")?;
+    let tx = tl_audio::AudioTx::bind(bind, peer).context("bind audio channel")?;
+    let mut enc = tl_audio::OpusEncoder::new(192).context("create opus encoder")?;
+    let mut seq: u32 = 0;
+    let mut next_tick = std::time::Instant::now() + std::time::Duration::from_millis(10);
+    while !stop.load(Ordering::Relaxed) {
+        let pcm = cap.next_frame().context("read audio frame")?;
+        let pts = tl_proto::time::now_us();
+        if let Ok(packet) = enc.encode(&pcm) {
+            if !packet.is_empty() {
+                let _ = tx.send(seq, pts, &packet);
+            }
+        }
+        seq = seq.wrapping_add(1);
+        let now = std::time::Instant::now();
+        if next_tick > now {
+            std::thread::sleep(next_tick - now);
+        }
+        next_tick += std::time::Duration::from_millis(10);
+    }
+    Ok(())
 }
 
 fn any() -> IpAddr {
@@ -181,16 +212,56 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
             })?;
         }
         Source::Screen => {
-            // The screen path needs a live X server (Wayland portal
-            // capture is a follow-up; see docs/LINUX-PORT.md).
+            // Auto-detect Wayland vs X11 (web-researched 2026-09):
+            // Wayland = WAYLAND_DISPLAY set or XDG_SESSION_TYPE=wayland.
+            // Use PortalCapturer (xdg-desktop-portal + PipeWire) for
+            // Wayland, ScreenCapturer (X11 GetImage) for X11/XWayland.
+            let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+                || std::env::var("XDG_SESSION_TYPE")
+                    .map(|v| v.eq_ignore_ascii_case("wayland"))
+                    .unwrap_or(false);
+
             let fps_whole = (fps_milli / 1000).max(1);
-            let mut cap = ScreenCapturer::new(fps_whole)
-                .context("open X11 screen capture (is $DISPLAY set?)")?;
-            log::info!(
-                "capturing X11 root window {}x{}",
-                cap.width(),
-                cap.height()
-            );
+            if is_wayland {
+                log::info!("Wayland session detected; using xdg-desktop-portal capture");
+                let mut cap = tl_linux_capture::PortalCapturer::new(fps_whole)
+                    .context(
+                        "open Wayland portal capture \
+                         (is xdg-desktop-portal + a compositor backend installed?)",
+                    )?;
+                log::info!(
+                    "capturing via portal: {}x{}",
+                    cap.width(),
+                    cap.height()
+                );
+                let stop2 = stop.clone();
+                std::thread::Builder::new().name("wayland-grab".into()).spawn(move || {
+                    let frame_dur = Duration::from_secs_f64(1.0 / fps_whole as f64);
+                    let mut next_tick = std::time::Instant::now() + frame_dur;
+                    let mut sent = 0u64;
+                    while !stop2.load(Ordering::Relaxed) {
+                        if let Some(max) = max_frames {
+                            if sent >= max { break; }
+                        }
+                        match cap.next_frame() {
+                            Ok(f) => frame_tx.send(f),
+                            Err(e) => { log::error!("portal grab: {e}"); break; }
+                        }
+                        sent += 1;
+                        let now = std::time::Instant::now();
+                        if next_tick > now { std::thread::sleep(next_tick - now); }
+                        next_tick += frame_dur;
+                    }
+                    frame_tx.close();
+                })?;
+            } else {
+                let mut cap = ScreenCapturer::new(fps_whole)
+                    .context("open X11 screen capture (is $DISPLAY set?)")?;
+                log::info!(
+                    "capturing X11 root window {}x{}",
+                    cap.width(),
+                    cap.height()
+                );
             let stop = stop.clone();
             let max_frames = max_frames;
             std::thread::Builder::new().name("x11grab".into()).spawn(move || {
@@ -219,6 +290,7 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
                 }
                 frame_tx.close();
             })?;
+            } // close else (X11)
         }
     }
 
@@ -241,7 +313,20 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     if let Some(source) = audio {
         let peer = SocketAddr::new(peer_ip, tl_proto::AUDIO_PORT);
         let local = SocketAddr::new(any(), 0);
-        super::audio::spawn_audio_feeder(local, peer, source, 192, stop.clone())?;
+        match source {
+            super::AudioSource::Sine { .. } => {
+                super::audio::spawn_audio_feeder(local, peer, source, 192, stop.clone())?;
+            }
+            super::AudioSource::System => {
+                // Linux system audio: PipeWire/PulseAudio capture via subprocess.
+                let stop = stop.clone();
+                std::thread::Builder::new().name("audio-pw".into()).spawn(move || {
+                    if let Err(e) = linux_system_audio_feeder(local, peer, stop) {
+                        log::warn!("system audio disabled: {e:#}");
+                    }
+                })?;
+            }
+        }
     }
 
     // Adaptive-bitrate target shared with the encode closure (SPEC §8).

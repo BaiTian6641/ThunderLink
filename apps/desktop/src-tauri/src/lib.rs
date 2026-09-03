@@ -391,6 +391,25 @@ fn stop_session(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Best-effort hostname for the window title.
+fn hostname_or_default() -> String {
+    std::process::Command::new("scutil")
+        .arg("--get")
+        .arg("LocalHostName")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("HOSTNAME")
+                .or_else(|_| std::env::var("HOST"))
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
 /// Session-slot watchdog: clears the slot when the cancel token fires OR
 /// when the session has been running for >2 s without any engine events
 /// (the event pump thread dropped = role thread exited). The previous
@@ -432,6 +451,13 @@ pub fn run() {
         .manage(AppState::default())
         .setup(|app| {
             spawn_slot_cleaner(app.handle().clone());
+
+            // Dynamic title: "ThunderLink — <hostname>"
+            let hostname = hostname_or_default();
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_title(&format!("ThunderLink — {hostname}"));
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

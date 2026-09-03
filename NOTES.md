@@ -331,6 +331,17 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   first_slice_segment_in_pic_flag is the next optimization. The
   subprocess approach adds ~10-50ms latency vs. a native library API.
 
+- Wayland-first + audio + title session (2026-09-03): engine now
+  auto-detects Wayland (WAYLAND_DISPLAY / XDG_SESSION_TYPE) and uses
+  PortalCapturer (xdg-desktop-portal + PipeWire) for Wayland sessions,
+  ScreenCapturer (X11) for X11/XWayland — the X11 grab failure on
+  Wayland is fixed. Linux system audio capture added via PipeWire
+  subprocess (pw-record / parec fallback) in engine audio.rs. Dynamic
+  window title: "ThunderLink — <hostname>" via scutil on macOS.
+  Both apps rebuilt: Mac DMG reinstalled to /Applications; Linux
+  AppImage 185 MB with ffmpeg, Wayland portal, audio, title fix.
+  Workspace 101/101, clippy 0.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

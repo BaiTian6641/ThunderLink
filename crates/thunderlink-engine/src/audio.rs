@@ -143,6 +143,68 @@ pub(crate) fn run_audio_sink(
     Ok(())
 }
 
+/// Capture system audio on Linux via PipeWire (or PulseAudio compat).
+/// Spawns `pw-record` (PipeWire) or `parec` (PulseAudio) as a subprocess,
+/// reading raw s16le 48kHz stereo PCM from stdout.
+#[cfg(target_os = "linux")]
+pub(crate) struct PipeWireCapture {
+    child: std::process::Child,
+}
+
+#[cfg(target_os = "linux")]
+impl PipeWireCapture {
+    /// Try pw-record first, then parec.
+    pub fn new() -> Result<Self> {
+        let spec = ["-r", "48000", "-c", "2", "-f", "s16le", "--raw"];
+        for cmd in ["pw-record", "parec"] {
+            if let Ok(child) = std::process::Command::new(cmd)
+                .args(spec.iter().copied())
+                .args(["--channel-map", "FL,FR"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                log::info!("system audio capture via {cmd}");
+                return Ok(Self { child });
+            }
+        }
+        anyhow::bail!("no audio capture tool found (pw-record or parec); is PipeWire/PulseAudio running?")
+    }
+
+    /// Read one 10 ms frame (480 samples × 2ch × 2 bytes = 1920 bytes).
+    pub fn next_frame(&mut self) -> Result<Vec<i16>> {
+        use std::io::Read;
+        const BYTES: usize = 480 * 2 * 2; // s16le stereo
+        let mut buf = vec![0u8; BYTES];
+        let stdout = self
+            .child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("capture stdout closed"))?;
+        let mut read_total = 0;
+        while read_total < BYTES {
+            match stdout.read(&mut buf[read_total..]) {
+                Ok(0) => anyhow::bail!("audio capture EOF (device disconnected?)"),
+                Ok(n) => read_total += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => anyhow::bail!("audio capture read: {e}"),
+            }
+        }
+        Ok(buf
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PipeWireCapture {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Sanity-check the channel constants the wire format relies on.
 #[cfg(test)]
 mod tests {

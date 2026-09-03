@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSScreenCaptureDescription</key>
+    <string>ThunderLink needs Screen Recording to capture your display and stream it to another computer.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ThunderLink needs Microphone access to stream system audio to another computer.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>ThunderLink needs Accessibility to control the target computer with your keyboard and mouse.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>ThunderLink needs Audio Capture to stream this computer's system audio.</string>
+</dict>
+</plist>

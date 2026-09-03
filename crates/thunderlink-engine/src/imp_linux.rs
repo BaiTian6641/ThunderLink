@@ -125,9 +125,27 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         anyhow::bail!("system audio capture is macOS-only in v1 (PipeWire planned)");
     }
 
-    // Default: stream at the target panel's NATIVE resolution (SPEC §1),
-    // clamped to the target's decoder capability for the chosen codec.
+    // Resolution policy: SPEC §1 says stream at the target's native panel
+    // resolution. BUT software encoding (x264/libx265) cannot sustain 5K
+    // in real time — cap the default for software encoders and let the
+    // user override with --res. Hardware encode (VAAPI, future) removes
+    // this cap.
     let (mut width, mut height) = res.unwrap_or((caps.panel.width, caps.panel.height));
+    const SOFTWARE_ENCODE_CAP_W: u32 = 2560;
+    const SOFTWARE_ENCODE_CAP_H: u32 = 1440;
+    if width > SOFTWARE_ENCODE_CAP_W || height > SOFTWARE_ENCODE_CAP_H {
+        let scale = (SOFTWARE_ENCODE_CAP_W as f64 / width as f64)
+            .min(SOFTWARE_ENCODE_CAP_H as f64 / height as f64)
+            .min(1.0);
+        let new_w = (width as f64 * scale) as u32 & !1;
+        let new_h = (height as f64 * scale) as u32 & !1;
+        log::info!(
+            "software encoder: capping {width}x{height} → {new_w}x{new_h} \
+             (use --res to override)"
+        );
+        width = new_w;
+        height = new_h;
+    }
     if let Some(d) = caps.decoders.iter().find(|d| d.codec == codec) {
         if width > d.max_width || height > d.max_height {
             let scale = (d.max_width as f64 / width as f64)

@@ -439,13 +439,17 @@ fn parse_streams(results: &HashMap<String, OwnedValue>) -> Result<(u32, Option<(
     if fields.len() != 2 {
         bail!("portal stream struct has {} fields, want 2", fields.len());
     }
-    let node_str = match &fields[0] {
-        ZValue::ObjectPath(p) => p.as_str(),
-        ZValue::Str(str) => str.as_str(),
-        other => bail!("portal node id is not a path: {:?}", other.value_signature()),
+    // The xdg-desktop-portal spec returns the PipeWire node ID as a
+    // plain u32 in the first struct field. Some implementations also
+    // return it as an object path or string with the ID embedded.
+    let node_id = match &fields[0] {
+        ZValue::U32(id) => *id,
+        ZValue::ObjectPath(p) => node_id_from_path(p.as_str())
+            .context("portal node path carries no numeric id")?,
+        ZValue::Str(s) => node_id_from_path(s.as_str())
+            .context("portal node string carries no numeric id")?,
+        other => bail!("portal node id has unexpected type: {:?}", other.value_signature()),
     };
-    let node_id =
-        node_id_from_path(node_str).context("portal node path carries no numeric id")?;
     let props: HashMap<String, OwnedValue> = fields[1]
         .clone()
         .try_into()

@@ -100,9 +100,12 @@ fn get_status(state: State<'_, AppState>) -> Status {
 
 #[tauri::command]
 fn get_permissions() -> Permissions {
+    let sr = preflight_screen_recording();
+    let ax = accessibility_trusted();
+    log::info!("permissions: screen_recording={sr}, accessibility={ax}");
     Permissions {
-        screen_recording: preflight_screen_recording(),
-        accessibility: accessibility_trusted(),
+        screen_recording: sr,
+        accessibility: ax,
         platform: std::env::consts::OS.to_string(),
     }
 }

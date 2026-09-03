@@ -342,6 +342,20 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   AppImage 185 MB with ffmpeg, Wayland portal, audio, title fix.
   Workspace 101/101, clippy 0.
 
+- Three bug fixes from real-machine test (2026-09-03):
+  (1) PortalCapturer 'node id is not a path: U32' — the xdg-desktop-
+  portal spec returns the PipeWire node ID as a plain u32 in the
+  first struct field, NOT as an object path. Fixed to accept U32,
+  ObjectPath, and Str types. (2) Mac target 'failed to fill whole
+  buffer' at 5K HEVC — the Linux initiator defaulted to the target's
+  full panel resolution (4480x2520 = 5K@60) which software libx265
+  cannot sustain; the encode loop stalls → TCP control channel EOF.
+  Fixed: cap software-encoder default at 2560x1440 (user can override
+  with --res). (3) Mac permission system — Info.plist TCC entries
+  were present but the .app has its OWN TCC identity (separate from
+  the terminal), so permissions need to be granted to the app itself.
+  Added logging + Info.plist injection step in install script.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

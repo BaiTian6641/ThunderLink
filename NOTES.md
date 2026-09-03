@@ -317,6 +317,20 @@ Living log of decisions, findings, and environment facts. Updated each phase.
   for HEVC researched (ffmpeg-next static build / ffmpeg-sidecar) —
   deferred to next cycle (big change; H264 fallback works well).
 
+- FFmpeg HEVC encoder implemented + e2e verified (2026-09-03):
+  FFmpegEncoder in tl-linux-capture spawns ffmpeg with libx265
+  (ultrafast/zerolatency, keyint=1 all-keyframes, repeat-headers).
+  Critical fix: dedicated reader thread continuously drains ffmpeg
+  stdout into a shared buffer (the naive non-blocking read approach
+  failed — ffmpeg's internal buffering means output isn't immediately
+  available after each stdin write). Engine now prefers HEVC when
+  ffmpeg+libx265 is available, falls back to x264/H264. E2E verified:
+  container Linux → Mac target over LAN at both 320x180@10 and
+  1920x1080@30, clean teardown. Caveats: keyint=1 (all keyframes) uses
+  ~3-5x the bitrate of normal HEVC — P-frame boundary detection via
+  first_slice_segment_in_pic_flag is the next optimization. The
+  subprocess approach adds ~10-50ms latency vs. a native library API.
+
 ## Open risks / TODO
 - CGVirtualDisplay is private API; fragile across macOS releases. Isolated
   in `tl-macos-display`; mirror-mode fallback exists (no virtual display).

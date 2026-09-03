@@ -26,6 +26,32 @@ use tl_session::InitiatorSession;
 use super::ctrl::{spawn_initiator_control_worker, EndReason};
 use super::{EventSink, InitiatorConfig, Source};
 
+enum EncoderChoice {
+    FFmpeg(tl_linux_capture::ffmpeg::FFmpegEncoder),
+    X264(X264Encoder),
+}
+
+impl EncoderChoice {
+    fn request_idr(&mut self) {
+        match self {
+            Self::FFmpeg(e) => e.request_idr(),
+            Self::X264(e) => e.request_idr(),
+        }
+    }
+    fn set_bitrate(&mut self, kbps: u32) -> Result<()> {
+        match self {
+            Self::FFmpeg(e) => e.set_bitrate(kbps),
+            Self::X264(e) => e.set_bitrate(kbps),
+        }
+    }
+    fn encode(&mut self, frame: &RawFrame) -> Result<Vec<tl_proto::EncodedUnit>> {
+        match self {
+            Self::FFmpeg(e) => e.encode(frame),
+            Self::X264(e) => e.encode(frame),
+        }
+    }
+}
+
 fn any() -> IpAddr {
     IpAddr::V4(Ipv4Addr::UNSPECIFIED)
 }
@@ -46,18 +72,20 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
     let stop = cancel.0.clone();
     let end_reason: EndReason = Arc::new(Mutex::new(None));
 
-    // Linux v1: H.264 software encode only (x264). If HEVC was requested
-    // (the default), gracefully negotiate down instead of erroring — the
-    // target supports both (SPEC §8 fallback codec). HEVC arrives with
-    // the ffmpeg/VAAPI path.
-    let codec = match codec {
-        Some(tl_proto::Codec::H264) | None => tl_proto::Codec::H264,
-        _ => {
+    // Linux codec selection: prefer HEVC via the ffmpeg subprocess encoder
+    // (libx265) when available; fall back to x264 H.264 (SPEC §8 fallback).
+    let use_ffmpeg_hevc = codec != Some(tl_proto::Codec::H264)
+        && tl_linux_capture::ffmpeg::FFmpegEncoder::available();
+    let codec = if use_ffmpeg_hevc {
+        log::info!("HEVC via ffmpeg/libx265 available; using HEVC");
+        tl_proto::Codec::Hevc
+    } else {
+        if codec != Some(tl_proto::Codec::H264) {
             log::warn!(
-                "requested codec not available on Linux v1 (x264 only); negotiating H.264 fallback (SPEC §8)"
+                "HEVC unavailable (no ffmpeg/libx265); using H.264 fallback (SPEC §8)"
             );
-            tl_proto::Codec::H264
         }
+        tl_proto::Codec::H264
     };
 
     let mut sess = InitiatorSession::connect(addr, "thunderlink-initiator")?;
@@ -194,7 +222,16 @@ pub fn run_initiator(cfg: InitiatorConfig, ev: &EventSink) -> Result<()> {
         }
     }
 
-    let mut encoder = X264Encoder::new(&stream_cfg).context("create x264 encoder")?;
+    let mut encoder: EncoderChoice = if codec == tl_proto::Codec::Hevc {
+        EncoderChoice::FFmpeg(
+            tl_linux_capture::ffmpeg::FFmpegEncoder::new(&stream_cfg)
+                .context("create ffmpeg HEVC encoder")?,
+        )
+    } else {
+        EncoderChoice::X264(
+            X264Encoder::new(&stream_cfg).context("create x264 encoder")?,
+        )
+    };
 
     sess.start()?;
     log::info!("streaming started");

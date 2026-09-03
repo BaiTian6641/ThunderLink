@@ -12,6 +12,7 @@ log = { workspace = true }
 parking_lot = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 # FFI layer of the x264-rs crate family. The safe `x264` wrapper (0.5)
 # exposes no way to set `b_repeat_headers` or force IDR frames, both
 # required by SPEC §5/§6, so we bind libx264 directly (same pattern as

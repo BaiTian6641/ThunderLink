@@ -12,6 +12,8 @@ pub mod capture;
 #[cfg(target_os = "linux")]
 pub mod encode;
 #[cfg(target_os = "linux")]
+pub mod ffmpeg;
+#[cfg(target_os = "linux")]
 pub mod frame;
 #[cfg(target_os = "linux")]
 pub mod portal;

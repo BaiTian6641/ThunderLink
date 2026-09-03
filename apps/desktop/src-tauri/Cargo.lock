@@ -4366,6 +4366,7 @@ name = "tl-linux-capture"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "libspa",
  "log",
  "nix 0.29.0",

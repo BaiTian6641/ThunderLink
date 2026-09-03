@@ -29,4 +29,7 @@ if [ -z "$GDK_BACKEND" ]; then
     export GDK_BACKEND=x11
 fi
 
+# Ensure bundled ffmpeg (for HEVC) is found
+export PATH="$HERE/usr/bin:$PATH"
+
 exec "$HERE/usr/bin/thunderlink-desktop" "$@"
